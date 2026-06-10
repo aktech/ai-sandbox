@@ -120,7 +120,7 @@ func containerName(prefix string) (string, error) {
 
 func cmdBuild(log *logger) error {
 	image := envDefault("PSB_IMAGE_NAME", "ai-sandbox-pi:latest")
-	piVersion := envDefault("PI_VERSION", "latest")
+	piVersion := envDefault("PI_VERSION", "v0.79.1")
 	uid := fmt.Sprintf("%d", os.Getuid())
 	gid := fmt.Sprintf("%d", os.Getgid())
 	home := os.Getenv("HOME")
@@ -139,14 +139,21 @@ func cmdBuild(log *logger) error {
 	}
 
 	log.Step(fmt.Sprintf("building %s (pi=%s, home=%s, uid=%s, gid=%s)", image, piVersion, home, uid, gid))
-	build := exec.Command("docker", "build",
-		"--build-arg", "PI_VERSION="+piVersion,
-		"--build-arg", "AGENT_UID="+uid,
-		"--build-arg", "AGENT_GID="+gid,
-		"--build-arg", "AGENT_HOME="+home,
+	args := []string{"build",
+		"--build-arg", "PI_VERSION=" + piVersion,
+		"--build-arg", "AGENT_UID=" + uid,
+		"--build-arg", "AGENT_GID=" + gid,
+		"--build-arg", "AGENT_HOME=" + home,
 		"-t", image,
-		tmp,
-	)
+	}
+	// GITHUB_TOKEN raises the API rate limit for mise's attestation checks
+	// during the build. Passed as a BuildKit secret so it never lands in a
+	// layer; the value itself is read by docker from the environment.
+	if os.Getenv("GITHUB_TOKEN") != "" {
+		args = append(args, "--secret", "id=github_token,env=GITHUB_TOKEN")
+	}
+	args = append(args, tmp)
+	build := exec.Command("docker", args...)
 	build.Stdout = os.Stdout
 	build.Stderr = os.Stderr
 	if err := build.Run(); err != nil {
