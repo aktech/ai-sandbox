@@ -1,0 +1,14 @@
+# Minimal image for psb-proxy. Multi-stage: build the static binary, copy
+# into a distroless static base. No shell, no secrets in layers; the proxy
+# reads its CA + secrets from stdin at runtime, never from the image.
+FROM golang:1.26-bookworm AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/psb-proxy ./cmd/psb-proxy
+
+# Pinned by digest (gcr.io/distroless/static-debian12:nonroot, resolved 2026-06-11).
+FROM gcr.io/distroless/static-debian12@sha256:d093aa3e30dbadd3efe1310db061a14da60299baff8450a17fe0ccc514a16639
+COPY --from=build /out/psb-proxy /psb-proxy
+ENTRYPOINT ["/psb-proxy"]
