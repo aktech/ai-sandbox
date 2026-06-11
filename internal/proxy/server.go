@@ -39,22 +39,36 @@ func New(cfg *Config, secrets map[string]string, caCertPEM, caKeyPEM []byte) (*S
 	// mutating goproxy's package globals so concurrent servers/tests don't race.
 	tlsCfg := goproxy.TLSConfigFromCA(&caCert)
 	mitm := &goproxy.ConnectAction{Action: goproxy.ConnectMitm, TLSConfig: tlsCfg}
+	tunnel := &goproxy.ConnectAction{Action: goproxy.ConnectAccept, TLSConfig: tlsCfg}
 	reject := &goproxy.ConnectAction{Action: goproxy.ConnectReject, TLSConfig: tlsCfg}
 
 	allow := NewAllowlist(cfg.EffectiveAllow())
 	inj := NewInjector(cfg.Inject, secrets)
 
+	// injectHosts is the set of hosts we must MITM to rewrite a header. Every
+	// other allowlisted host is tunneled end-to-end so the proxy never sees the
+	// plaintext (e.g. a Claude subscription OAuth token stays private).
+	injectHosts := map[string]bool{}
+	for h := range cfg.Inject {
+		injectHosts[h] = true
+	}
+
 	p := goproxy.NewProxyHttpServer()
 	p.Verbose = false
 
-	// Gate CONNECT: MITM allowlisted hosts, reject everything else.
+	// Gate CONNECT: MITM hosts that need injection, tunnel other allowlisted
+	// hosts untouched, reject everything else.
 	p.OnRequest().HandleConnectFunc(func(host string, ctx *goproxy.ProxyCtx) (*goproxy.ConnectAction, string) {
-		if allow.Allowed(host) {
-			log.Printf("ALLOW CONNECT %s", host)
+		if !allow.Allowed(host) {
+			log.Printf("DENY CONNECT %s", host)
+			return reject, host
+		}
+		if injectHosts[hostOnly(host)] {
+			log.Printf("ALLOW CONNECT %s (mitm: inject)", host)
 			return mitm, host
 		}
-		log.Printf("DENY CONNECT %s", host)
-		return reject, host
+		log.Printf("ALLOW CONNECT %s (tunnel)", host)
+		return tunnel, host
 	})
 
 	// Gate plain HTTP and inject on the (now decrypted) request.

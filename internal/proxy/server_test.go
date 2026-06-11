@@ -66,6 +66,48 @@ func TestServer_AllowedHostInjectsHeader(t *testing.T) {
 	}
 }
 
+// An allowlisted host with NO inject rule must be tunneled end-to-end (plain
+// CONNECT, no MITM), so the proxy never sees the bytes. We prove this by
+// trusting ONLY the upstream's own cert (not the proxy CA): if the proxy tried
+// to MITM, the client would reject the proxy-minted cert and the request fails.
+func TestServer_AllowOnlyHostIsTunneledNotMitmed(t *testing.T) {
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, r.Header.Get("x-test"))
+	}))
+	defer upstream.Close()
+	upHost := upstream.Listener.Addr().String()
+
+	caCert, caKey, _ := ca.Generate("test")
+	cfg := &Config{Allow: []string{hostOnly(upHost)}} // allowed (bare host), no inject rule
+	srv, err := New(cfg, map[string]string{}, caCert, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	// Trust ONLY the upstream's real cert, NOT the proxy CA.
+	pool := x509.NewCertPool()
+	pool.AddCert(upstream.Certificate())
+	pu, _ := url.Parse(ts.URL)
+	client := &http.Client{Transport: &http.Transport{
+		Proxy:           http.ProxyURL(pu),
+		TLSClientConfig: &tls.Config{RootCAs: pool},
+	}}
+
+	req, _ := http.NewRequest("GET", "https://"+upHost+"/", nil)
+	req.Header.Set("x-test", "passthrough")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("plain tunnel should succeed trusting only upstream cert: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != "passthrough" {
+		t.Fatalf("upstream saw x-test=%q, want passthrough", string(body))
+	}
+}
+
 func TestServer_DeniedHostRefused(t *testing.T) {
 	caCert, caKey, _ := ca.Generate("test")
 	cfg := &Config{Allow: []string{"allowed.example"}}
