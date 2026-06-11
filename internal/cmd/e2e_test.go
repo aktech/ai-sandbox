@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -27,7 +28,10 @@ func TestE2E_InternalNetBlocksDirectEgress(t *testing.T) {
 	out, _ := exec.Command("docker", "run", "--rm", "--network", net,
 		"alpine", "sh", "-c",
 		"wget -T3 -q -O- http://1.1.1.1 >/dev/null 2>&1 && echo REACHED || echo BLOCKED").CombinedOutput()
-	if len(out) < 7 || string(out[:7]) != "BLOCKED" {
-		t.Fatalf("expected BLOCKED, got %q", string(out))
+	// CombinedOutput may be prefixed with image-pull progress (CI has no cached
+	// image), so match on content rather than an exact prefix.
+	s := string(out)
+	if !strings.Contains(s, "BLOCKED") || strings.Contains(s, "REACHED") {
+		t.Fatalf("expected egress BLOCKED, got %q", s)
 	}
 }
