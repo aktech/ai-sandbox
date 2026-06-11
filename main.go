@@ -319,33 +319,84 @@ func main() {
 	}
 }
 
+const secretHelp = `psb secret - manage the encrypted secret store
+
+Secrets are kept in an encrypted file on the host (~/.config/ai-sandbox/secrets.enc),
+unlocked with your master password. Sandboxes never see the real values, only
+sentinels that the proxy swaps for the real secret on the way out.
+
+Usage:
+  psb secret set <name>    store/replace a secret named <name>
+  psb secret rm  <name>    remove a secret
+  psb secret ls            list stored secret names (never values)
+
+The value for 'set' is read from stdin (pipe it, or paste at the masked prompt),
+never from an argument, so it can't leak via shell history or the process list.
+
+Examples:
+  printf '%s' "$GITHUB_TOKEN" | psb secret set github
+  psb secret set openai < token.txt
+  psb secret set github            # prompts: master password, then the value
+  psb secret ls
+  psb secret rm openai
+
+Notes:
+  - <name> must match the "secret" field in your proxy.inject rules and the
+    proxy.env map in config.json.
+  - Set PSB_MASTER_PASSWORD to avoid the master-password prompt.
+  - The proxy loads secrets once at startup; run 'psb proxy stop' then re-enter
+    a sandbox so a new/changed secret takes effect.`
+
+const proxyHelp = `psb proxy - manage the credential-injecting egress proxy
+
+The proxy is one container that every sandbox routes through. It holds the real
+secrets in memory, injects them into allowed requests, and enforces a per-project
+domain allowlist. Sandboxes sit on a private network whose only exit is the proxy.
+
+Usage:
+  psb proxy init    generate the CA + an empty secret store (run once)
+  psb proxy stop    stop the shared proxy container
+  psb proxy log     stream the proxy's live ALLOW / DENY decisions
+
+Examples:
+  psb proxy init                   # first-time setup; sets the master password
+  psb proxy log                    # watch traffic decisions
+  psb proxy stop                   # then re-enter a sandbox to reload secrets/rules
+
+Notes:
+  - 'init' will not overwrite an existing CA (so already-shared certs stay valid).
+  - Egress rules live under the "proxy" block in config.json (allow / extra_allow,
+    "*" for unrestricted, [] for a full airgap; inject + env declare secret use).`
+
 // dispatchSecret routes `psb secret <action> [name]`.
 func dispatchSecret(h cmd.Handler, args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("usage: psb secret set|rm|ls [name]")
+	if len(args) == 0 || isHelp(args[0]) {
+		os.Stdout.WriteString(secretHelp + "\n")
+		return nil
 	}
 	switch args[0] {
 	case "set":
 		if len(args) < 2 {
-			return fmt.Errorf("usage: psb secret set <name>")
+			return fmt.Errorf("usage: psb secret set <name>\n(run `psb secret` for help)")
 		}
 		return h.SecretSet(args[1])
 	case "rm":
 		if len(args) < 2 {
-			return fmt.Errorf("usage: psb secret rm <name>")
+			return fmt.Errorf("usage: psb secret rm <name>\n(run `psb secret` for help)")
 		}
 		return h.SecretRM(args[1])
 	case "ls":
 		return h.SecretLS()
 	default:
-		return fmt.Errorf("unknown secret action %q (use: set | rm | ls)", args[0])
+		return fmt.Errorf("unknown secret action %q (use: set | rm | ls; `psb secret` for help)", args[0])
 	}
 }
 
 // dispatchProxy routes `psb proxy <action>`.
 func dispatchProxy(h cmd.Handler, args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("usage: psb proxy init|stop|log")
+	if len(args) == 0 || isHelp(args[0]) {
+		os.Stdout.WriteString(proxyHelp + "\n")
+		return nil
 	}
 	switch args[0] {
 	case "init":
@@ -355,6 +406,11 @@ func dispatchProxy(h cmd.Handler, args []string) error {
 	case "log", "logs":
 		return h.ProxyLog()
 	default:
-		return fmt.Errorf("unknown proxy action %q (use: init | stop | log)", args[0])
+		return fmt.Errorf("unknown proxy action %q (use: init | stop | log; `psb proxy` for help)", args[0])
 	}
+}
+
+// isHelp reports whether an arg is a help flag.
+func isHelp(s string) bool {
+	return s == "-h" || s == "--help" || s == "help"
 }
