@@ -44,6 +44,12 @@ type Project struct {
 type ProxyBlock struct {
 	Allow  []string                   `json:"allow"`
 	Inject map[string]json.RawMessage `json:"inject,omitempty"`
+	// Env maps a secret name to the environment variable the sandbox sets to
+	// that secret's sentinel, e.g. {"github": "GH_TOKEN"}. This is how a tool
+	// inside the sandbox is told it is "authenticated" without ever seeing the
+	// real value; the proxy swaps the sentinel for the real secret on the way
+	// out. Fully config-driven: no secret name or env var is hardcoded.
+	Env map[string]string `json:"env,omitempty"`
 }
 
 // File is the top-level JSON document.
@@ -105,6 +111,12 @@ func Resolve(path, project string, base Effective) Effective {
 			}
 			for k, v := range p.Proxy.Inject {
 				cfg.Proxy.Inject[k] = v
+			}
+			if len(p.Proxy.Env) > 0 && cfg.Proxy.Env == nil {
+				cfg.Proxy.Env = map[string]string{}
+			}
+			for k, v := range p.Proxy.Env {
+				cfg.Proxy.Env[k] = v
 			}
 		}
 		if len(p.ExtraAllow) > 0 {

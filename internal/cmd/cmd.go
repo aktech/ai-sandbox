@@ -8,7 +8,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -216,13 +215,6 @@ func (h Handler) create(name string, c cfg.Effective, home, cwd string, extraLab
 	return dx.Create(h.Docker, spec)
 }
 
-// secretEnvVar maps a secret name to the env var the agent tool reads. In
-// proxy mode each of these is set to a sentinel instead of the real value.
-var secretEnvVar = map[string]string{
-	"anthropic": "ANTHROPIC_API_KEY",
-	"github":    "GH_TOKEN",
-}
-
 // caInContainer is where the proxy's CA cert is mounted inside the sandbox.
 const caInContainer = "/etc/psb/ca.crt"
 
@@ -262,27 +254,11 @@ func buildSpec(name string, c cfg.Effective, home, cwd string, extraLabels map[s
 		"REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO"} {
 		env[v] = caInContainer
 	}
-	for _, sec := range proxySecretNames(c.Proxy) {
-		if ev, ok := secretEnvVar[sec]; ok {
-			env[ev] = proxy.Sentinel(sec)
-		}
+	// Sentinels: for each secret the config maps to an env var, set that env
+	// var to the secret's sentinel. Entirely config-driven (proxy.env); no
+	// secret name or env var is hardcoded.
+	for sec, ev := range c.Proxy.Env {
+		env[ev] = proxy.Sentinel(sec)
 	}
 	return spec
-}
-
-// proxySecretNames returns the distinct secret names referenced by the inject
-// rules in a proxy block, parsing each rule's raw JSON for its "secret" field.
-func proxySecretNames(p *cfg.ProxyBlock) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, raw := range p.Inject {
-		var r struct {
-			Secret string `json:"secret"`
-		}
-		if json.Unmarshal(raw, &r) == nil && r.Secret != "" && !seen[r.Secret] {
-			seen[r.Secret] = true
-			out = append(out, r.Secret)
-		}
-	}
-	return out
 }

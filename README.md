@@ -125,19 +125,20 @@ How it works:
 - Each sandbox runs on its own private Docker network that has **no route to
   the internet**. The proxy is the only way out, so the domain allowlist is
   enforced by the network itself, not by the agent's good behavior.
-- Inside the sandbox, `ANTHROPIC_API_KEY` (and `GH_TOKEN`) are set to
-  sentinels like `__psb_anthropic__`. When the agent calls an allowlisted
-  host that has an inject rule, the proxy replaces the sentinel header with
-  the real secret. The agent never holds the key.
+- Inside the sandbox, the env var you name in `proxy.env` (e.g. `GH_TOKEN`) is
+  set to a sentinel like `__psb_<secret>__`. When the agent calls an
+  allowlisted host that has an inject rule, the proxy replaces the sentinel in
+  the header with the real secret. The agent never holds the key. Which secret
+  goes in which env var and which header is entirely config-driven; nothing is
+  hardcoded.
 
-Set it up once:
+Set it up once (the secret names below are arbitrary labels you choose):
 
 ```sh
 psb build                      # if you haven't already
 make proxy-image               # build the proxy container (one-time)
 psb proxy init                 # generate the CA + empty secret store
-printf '%s' "$ANTHROPIC_API_KEY" | psb secret set anthropic
-printf '%s' "$GITHUB_TOKEN"     | psb secret set github
+printf '%s' "$SOME_API_KEY" | psb secret set <name>
 ```
 
 Then add a `proxy` block to your config:
@@ -147,12 +148,12 @@ Then add a `proxy` block to your config:
   "default": {
     "mounts": ["{{CWD}}"],
     "proxy": {
-      "allow": ["api.anthropic.com", "github.com", "api.github.com",
-                "*.githubusercontent.com", "registry.npmjs.org", "pypi.org"],
+      "allow": ["api.example.com", "registry.npmjs.org", "pypi.org"],
+      "env": { "myservice": "MYSERVICE_TOKEN" },
       "inject": {
-        "api.anthropic.com": {"header": "x-api-key", "secret": "anthropic"},
-        "api.github.com":    {"header": "Authorization", "secret": "github", "format": "Bearer %s"},
-        "github.com":        {"header": "Authorization", "secret": "github", "basic": true}
+        "api.example.com": {"header": "Authorization", "secret": "myservice", "format": "Bearer %s"},
+        "api.example.com": {"header": "x-api-key", "secret": "myservice"},
+        "example.com":     {"header": "Authorization", "secret": "myservice", "basic": true}
       }
     }
   },
@@ -163,6 +164,9 @@ Then add a `proxy` block to your config:
 }
 ```
 
+- `env` maps each secret name to the environment variable the sandbox sets to
+  that secret's sentinel, so a CLI inside believes it is authenticated. Pick
+  whatever names your tools read (`GH_TOKEN`, `ANTHROPIC_API_KEY`, etc.).
 - `allow` is default-deny: only listed hosts are reachable. `*.` matches any
   subdomain depth; a plain entry matches that exact host. A host you inject
   into is allowed automatically.
