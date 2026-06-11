@@ -37,12 +37,16 @@ func TestServer_AllowedHostInjectsHeader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := &Config{
-		Allow:  []string{upHost},
-		Inject: map[string]InjectRule{hostOnly(upHost): {Header: "x-api-key", Secret: "anthropic"}},
-	}
-	srv, err := New(cfg, map[string]string{"anthropic": "REALKEY"}, caCert, caKey)
+	srv, err := New(map[string]string{"anthropic": "REALKEY"}, caCert, caKey)
 	if err != nil {
+		t.Fatal(err)
+	}
+	// The httptest client connects from 127.0.0.1, so a 127/8 project rule
+	// applies. The inject rule makes the proxy MITM + swap the header.
+	if err := srv.UpdateRules(RuleSet{
+		Projects: []Subnet{{CIDR: "127.0.0.0/8", Allow: []string{hostOnly(upHost)}}},
+		Inject:   map[string]InjectRule{hostOnly(upHost): {Header: "x-api-key", Secret: "anthropic"}},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	// Trust the self-signed httptest upstream (production uses system roots).
@@ -78,9 +82,14 @@ func TestServer_AllowOnlyHostIsTunneledNotMitmed(t *testing.T) {
 	upHost := upstream.Listener.Addr().String()
 
 	caCert, caKey, _ := ca.Generate("test")
-	cfg := &Config{Allow: []string{hostOnly(upHost)}} // allowed (bare host), no inject rule
-	srv, err := New(cfg, map[string]string{}, caCert, caKey)
+	srv, err := New(map[string]string{}, caCert, caKey)
 	if err != nil {
+		t.Fatal(err)
+	}
+	// Allowed (bare host) via a 127/8 project rule, but no inject rule.
+	if err := srv.UpdateRules(RuleSet{
+		Projects: []Subnet{{CIDR: "127.0.0.0/8", Allow: []string{hostOnly(upHost)}}},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	ts := httptest.NewServer(srv.Handler())
@@ -110,8 +119,10 @@ func TestServer_AllowOnlyHostIsTunneledNotMitmed(t *testing.T) {
 
 func TestServer_DeniedHostRefused(t *testing.T) {
 	caCert, caKey, _ := ca.Generate("test")
-	cfg := &Config{Allow: []string{"allowed.example"}}
-	srv, _ := New(cfg, map[string]string{}, caCert, caKey)
+	srv, _ := New(map[string]string{}, caCert, caKey)
+	_ = srv.UpdateRules(RuleSet{
+		Projects: []Subnet{{CIDR: "127.0.0.0/8", Allow: []string{"allowed.example"}}},
+	})
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 

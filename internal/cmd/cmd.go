@@ -70,6 +70,11 @@ func (h Handler) ensure(name string, c cfg.Effective, home, cwd string, extraLab
 		if err := setupSandboxNet(h.Docker, name); err != nil {
 			return fmt.Errorf("setup sandbox network: %w", err)
 		}
+		// Push this project's allowlist to the proxy (no password needed). The
+		// proxy merges it by subnet, so other sandboxes keep their own rules.
+		if err := deliverRules(h.Docker, c, name); err != nil {
+			return fmt.Errorf("deliver proxy rules: %w", err)
+		}
 	}
 
 	if dx.ContainerExists(h.Docker, name) {

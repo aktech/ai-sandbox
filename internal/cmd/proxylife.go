@@ -1,10 +1,14 @@
 package cmd
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 
+	"github.com/aktech/ai-sandbox/internal/cfg"
 	"github.com/aktech/ai-sandbox/internal/dx"
+	"github.com/aktech/ai-sandbox/internal/proxy"
 )
 
 const proxyContainer = "psb-proxy"
@@ -31,11 +35,75 @@ func proxyRunArgs(name, image string) []string {
 		"--tmpfs", "/run/psb:rw,mode=1777,size=1m", image}
 }
 
-// writePayloadExecArgs builds argv to deliver the payload to a running proxy
-// via stdin. The proxy's --write-payload mode copies stdin to the tmpfs file
-// that its serving process is polling for.
+// writePayloadExecArgs builds argv to deliver the secrets payload to a running
+// proxy via stdin. The proxy's --write-payload mode copies stdin to the tmpfs
+// file that its serving process reads once at startup.
 func writePayloadExecArgs(name string) []string {
 	return []string{"exec", "-i", name, "/psb-proxy", "--write-payload"}
+}
+
+// writeRulesExecArgs builds argv to deliver an updated rule set (no secrets) to
+// a running proxy via stdin. The proxy hot-swaps its allowlist.
+func writeRulesExecArgs(name string) []string {
+	return []string{"exec", "-i", name, "/psb-proxy", "--write-rules"}
+}
+
+// networkSubnet returns the CIDR of a docker network, e.g. "172.20.0.0/16".
+func networkSubnet(e dx.Executor, net string) (string, error) {
+	out, err := e.Output("network", "inspect", net,
+		"--format", "{{range .IPAM.Config}}{{.Subnet}}{{end}}")
+	if err != nil {
+		return "", err
+	}
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return "", fmt.Errorf("network %s has no subnet", net)
+	}
+	return out, nil
+}
+
+// rulesForProject builds the rule update a single project's sandbox delivers:
+// a global inject map plus one subnet entry mapping that sandbox's network to
+// the project's full allowlist. The project's allow already includes the
+// default allow (cfg merges them), so Universal is left empty; an entry of "*"
+// makes the project unrestricted.
+func rulesForProject(c cfg.Effective, cidr string) (proxy.RuleSet, error) {
+	pc, err := parseProxyBlock(c.Proxy)
+	if err != nil {
+		return proxy.RuleSet{}, err
+	}
+	return proxy.RuleSet{
+		Inject:   pc.Inject,
+		Projects: []proxy.Subnet{{CIDR: cidr, Allow: pc.EffectiveAllow()}},
+	}, nil
+}
+
+// parseProxyBlock converts the raw cfg proxy block into a parsed proxy.Config
+// (allow list + typed inject rules).
+func parseProxyBlock(p *cfg.ProxyBlock) (*proxy.Config, error) {
+	raw, err := json.Marshal(map[string]any{"allow": p.Allow, "inject": p.Inject})
+	if err != nil {
+		return nil, err
+	}
+	return proxy.ParseConfig(raw)
+}
+
+// deliverRules computes the current project's rule update and pushes it to the
+// running proxy. No master password is needed (the update carries no secrets).
+func deliverRules(e dx.Executor, c cfg.Effective, container string) error {
+	cidr, err := networkSubnet(e, networkName(container))
+	if err != nil {
+		return err
+	}
+	rs, err := rulesForProject(c, cidr)
+	if err != nil {
+		return err
+	}
+	payload, err := json.Marshal(rs)
+	if err != nil {
+		return err
+	}
+	return e.RunWithStdin(payload, writeRulesExecArgs(proxyContainer)...)
 }
 
 // internalNetCreateArgs builds argv to create a sandbox's --internal network.

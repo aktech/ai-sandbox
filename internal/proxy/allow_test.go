@@ -24,3 +24,21 @@ func TestAllowlist(t *testing.T) {
 		}
 	}
 }
+
+// A "*" entry means allow any host (a project that opts out of all limits).
+func TestAllowlist_StarMatchesEverything(t *testing.T) {
+	a := NewAllowlist([]string{"*"})
+	for _, h := range []string{"example.com", "api.github.com:443", "anything.at.all", "1.2.3.4:9000"} {
+		if !a.Allowed(h) {
+			t.Errorf("with [*], Allowed(%q) = false, want true", h)
+		}
+	}
+}
+
+// "*" mixed with specific entries still allows everything.
+func TestAllowlist_StarAmongOthers(t *testing.T) {
+	a := NewAllowlist([]string{"github.com", "*"})
+	if !a.Allowed("totally-random.example") {
+		t.Fatal("star anywhere in the list should allow everything")
+	}
+}

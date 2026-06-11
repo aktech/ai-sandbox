@@ -7,6 +7,7 @@ package proxy
 import "strings"
 
 type Allowlist struct {
+	all      bool // a "*" entry: allow any host
 	exact    map[string]bool
 	suffixes []string // for "*.example.com" -> ".example.com"
 }
@@ -14,9 +15,12 @@ type Allowlist struct {
 func NewAllowlist(entries []string) *Allowlist {
 	a := &Allowlist{exact: map[string]bool{}}
 	for _, e := range entries {
-		if rest, ok := strings.CutPrefix(e, "*."); ok {
-			a.suffixes = append(a.suffixes, "."+rest)
-		} else {
+		switch {
+		case e == "*":
+			a.all = true
+		case strings.HasPrefix(e, "*."):
+			a.suffixes = append(a.suffixes, "."+strings.TrimPrefix(e, "*."))
+		default:
 			a.exact[e] = true
 		}
 	}
@@ -25,6 +29,9 @@ func NewAllowlist(entries []string) *Allowlist {
 
 // Allowed reports whether host (optionally "host:port") may be reached.
 func (a *Allowlist) Allowed(host string) bool {
+	if a.all {
+		return true
+	}
 	if i := strings.LastIndexByte(host, ':'); i >= 0 {
 		host = host[:i]
 	}

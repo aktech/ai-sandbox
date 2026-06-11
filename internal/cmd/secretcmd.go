@@ -12,7 +12,6 @@ import (
 	"github.com/aktech/ai-sandbox/internal/ca"
 	"github.com/aktech/ai-sandbox/internal/cfg"
 	"github.com/aktech/ai-sandbox/internal/dx"
-	"github.com/aktech/ai-sandbox/internal/proxy"
 	"github.com/aktech/ai-sandbox/internal/secret"
 	"golang.org/x/term"
 )
@@ -42,37 +41,20 @@ func masterPassword(prompt string) ([]byte, error) {
 	return pw, err
 }
 
-// assemblePayload builds the JSON the proxy reads: CA cert+key, the decrypted
-// secrets, and the allow/inject config. config.allow is the effective allow
-// list (inject hosts are auto-allowed) so a host you inject into is reachable.
-func assemblePayload(c cfg.Effective, secrets map[string]string, caCert, caKey string) ([]byte, error) {
-	if c.Proxy == nil {
-		return nil, fmt.Errorf("no proxy config")
-	}
-	// Compute the effective allow list via the proxy parser.
-	rawCfg, err := json.Marshal(map[string]any{"allow": c.Proxy.Allow, "inject": c.Proxy.Inject})
-	if err != nil {
-		return nil, err
-	}
-	pc, err := proxy.ParseConfig(rawCfg)
-	if err != nil {
-		return nil, err
-	}
-	outCfg := map[string]any{
-		"allow":  pc.EffectiveAllow(),
-		"inject": c.Proxy.Inject,
-	}
+// secretsPayload builds the JSON delivered to the proxy once at start: CA
+// cert+key and the decrypted secret values. The allow/inject rules are sent
+// separately (and without secrets) so they can be refreshed on every psb.
+func secretsPayload(secrets map[string]string, caCert, caKey string) ([]byte, error) {
 	return json.Marshal(map[string]any{
 		"ca_cert": caCert,
 		"ca_key":  caKey,
 		"secrets": secrets,
-		"config":  outCfg,
 	})
 }
 
-// proxyPayload loads the secret store and CA, then assembles the proxy payload.
-// Returns the payload bytes and the host path of the CA cert (to mount into the
-// sandbox).
+// proxyPayload loads the secret store and CA, then assembles the secrets
+// payload. Returns the payload bytes and the host path of the CA cert (to mount
+// into the sandbox).
 func (h Handler) proxyPayload(c cfg.Effective) (payload []byte, caHostPath string, err error) {
 	certPEM, err := os.ReadFile(caCertPath())
 	if err != nil {
@@ -90,7 +72,7 @@ func (h Handler) proxyPayload(c cfg.Effective) (payload []byte, caHostPath strin
 	if err != nil {
 		return nil, "", err
 	}
-	payload, err = assemblePayload(c, secrets, string(certPEM), string(keyPEM))
+	payload, err = secretsPayload(secrets, string(certPEM), string(keyPEM))
 	if err != nil {
 		return nil, "", err
 	}
