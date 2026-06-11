@@ -16,7 +16,7 @@ package main
 
 import (
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -25,12 +25,20 @@ import (
 	"github.com/aktech/ai-sandbox/internal/proxy"
 )
 
+// die logs a final error and exits non-zero (slog has no Fatal).
+func die(msg string, args ...any) {
+	slog.Error(msg, args...)
+	os.Exit(1)
+}
+
 const (
 	payloadPath = "/run/psb/payload.json" // secrets + CA, delivered once
 	rulesDir    = "/run/psb/rules.d"      // one rule file per project, delivered per psb
 )
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
+
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "--write-payload":
@@ -41,14 +49,14 @@ func main() {
 			// rules.d/<key>.json. Each project owns its own file, so concurrent
 			// psb runs never clobber one another.
 			if len(os.Args) < 3 {
-				log.Fatalf("psb-proxy --write-rules: missing key")
+				die("missing key", "arg", "--write-rules")
 			}
 			_ = os.MkdirAll(rulesDir, 0o700)
 			writeFile(filepath.Join(rulesDir, sanitizeKey(os.Args[2])+".json"), os.Stdin)
 			return
 		case "--rm-rules":
 			if len(os.Args) < 3 {
-				log.Fatalf("psb-proxy --rm-rules: missing key")
+				die("missing key", "arg", "--rm-rules")
 			}
 			_ = os.Remove(filepath.Join(rulesDir, sanitizeKey(os.Args[2])+".json"))
 			return
@@ -74,29 +82,29 @@ func sanitizeKey(s string) string {
 func writeFile(path string, r io.Reader) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
-		log.Fatalf("psb-proxy write %s: %v", path, err)
+		die("write file", "path", path, "err", err)
 	}
 	defer f.Close()
 	if _, err := io.Copy(f, r); err != nil {
-		log.Fatalf("psb-proxy write %s: %v", path, err)
+		die("write file", "path", path, "err", err)
 	}
 }
 
 func serve() {
 	in, err := waitForSecrets(15 * time.Second)
 	if err != nil {
-		log.Fatalf("psb-proxy: %v", err)
+		die("waiting for secrets payload", "err", err)
 	}
 	srv, err := proxy.New(in.Secrets, []byte(in.CACert), []byte(in.CAKey))
 	if err != nil {
-		log.Fatalf("psb-proxy: %v", err)
+		die("building proxy", "err", err)
 	}
 	go watchRules(srv)
 
 	addr := ":8080"
-	log.Printf("psb-proxy listening on %s", addr)
+	slog.Info("listening", "addr", addr)
 	if err := http.ListenAndServe(addr, srv.Handler()); err != nil {
-		log.Fatalf("psb-proxy: serve: %v", err)
+		die("serve", "err", err)
 	}
 }
 
@@ -134,9 +142,9 @@ func watchRules(srv *proxy.Server) {
 			combined := proxy.CombineRuleSets(sets)
 			if err := srv.UpdateRules(combined); err == nil {
 				lastSig = sig
-				log.Printf("psb-proxy: rules updated (%d project(s))", len(combined.Projects))
+				slog.Info("rules updated", "projects", len(combined.Projects))
 			} else {
-				log.Printf("psb-proxy: bad rules: %v", err)
+				slog.Error("bad rules", "err", err)
 			}
 		}
 		time.Sleep(500 * time.Millisecond)

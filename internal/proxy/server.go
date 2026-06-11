@@ -4,7 +4,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -29,6 +29,8 @@ type Server struct {
 	secrets map[string]string
 	rules   atomic.Pointer[compiledRules]
 
+	log *slog.Logger
+
 	mitm   *goproxy.ConnectAction
 	tunnel *goproxy.ConnectAction
 	reject *goproxy.ConnectAction
@@ -50,6 +52,7 @@ func New(secrets map[string]string, caCertPEM, caKeyPEM []byte) (*Server, error)
 	s := &Server{
 		proxy:   goproxy.NewProxyHttpServer(),
 		secrets: secrets,
+		log:     slog.Default(),
 		mitm:    &goproxy.ConnectAction{Action: goproxy.ConnectMitm, TLSConfig: tlsCfg},
 		tunnel:  &goproxy.ConnectAction{Action: goproxy.ConnectAccept, TLSConfig: tlsCfg},
 		reject:  &goproxy.ConnectAction{Action: goproxy.ConnectReject, TLSConfig: tlsCfg},
@@ -68,14 +71,14 @@ func New(secrets map[string]string, caCertPEM, caKeyPEM []byte) (*Server, error)
 		}
 		c := s.rules.Load()
 		if !c.allowlistFor(src).Allowed(host) {
-			log.Printf("DENY CONNECT %s (from %s)", host, src)
+			s.log.Info("connect", "decision", "deny", "host", host, "src", src)
 			return s.reject, host
 		}
 		if _, inject := c.injectRules()[hostOnly(host)]; inject {
-			log.Printf("ALLOW CONNECT %s (mitm: inject)", host)
+			s.log.Info("connect", "decision", "allow", "mode", "mitm", "host", host, "src", src)
 			return s.mitm, host
 		}
-		log.Printf("ALLOW CONNECT %s (tunnel)", host)
+		s.log.Info("connect", "decision", "allow", "mode", "tunnel", "host", host, "src", src)
 		return s.tunnel, host
 	})
 
@@ -87,7 +90,8 @@ func New(secrets map[string]string, caCertPEM, caKeyPEM []byte) (*Server, error)
 		c := s.rules.Load()
 		if req.URL.Scheme == "http" {
 			if !c.allowlistFor(req.RemoteAddr).Allowed(req.URL.Host) {
-				log.Printf("DENY %s %s (from %s)", req.Method, req.URL.Host, req.RemoteAddr)
+				s.log.Info("request", "decision", "deny", "method", req.Method,
+					"host", req.URL.Host, "src", req.RemoteAddr)
 				return req, goproxy.NewResponse(req, goproxy.ContentTypeText,
 					http.StatusForbidden, "psb-proxy: host not in allowlist\n")
 			}
