@@ -52,19 +52,24 @@ func (h Handler) ensure(name string, c cfg.Effective, home, cwd string, extraLab
 
 	// Proxy mode: bring up the shared credential proxy and the sandbox's own
 	// internal network before creating/starting the container. caHostPath is
-	// stashed so create -> buildSpec mounts the CA into the sandbox.
+	// just a path (no unlock needed) so create -> buildSpec can mount the CA.
+	// The master password is only required to (re)start the proxy, so when the
+	// proxy is already running we skip the unlock entirely and re-entering a
+	// sandbox is prompt-free.
 	if c.Proxy != nil {
-		payload, caHostPath, err := h.proxyPayload(c)
-		if err != nil {
-			return err
-		}
-		if err := ensureProxyRunning(h.Docker, proxyImage(), payload); err != nil {
-			return fmt.Errorf("start proxy: %w", err)
+		h.caHostPath = caCertPath()
+		if !dx.ContainerRunning(h.Docker, proxyContainer) {
+			payload, _, err := h.proxyPayload(c)
+			if err != nil {
+				return err
+			}
+			if err := ensureProxyRunning(h.Docker, proxyImage(), payload); err != nil {
+				return fmt.Errorf("start proxy: %w", err)
+			}
 		}
 		if err := setupSandboxNet(h.Docker, name); err != nil {
 			return fmt.Errorf("setup sandbox network: %w", err)
 		}
-		h.caHostPath = caHostPath
 	}
 
 	if dx.ContainerExists(h.Docker, name) {
