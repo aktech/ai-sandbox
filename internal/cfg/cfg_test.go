@@ -118,6 +118,30 @@ func TestResolve_PortsMergeDefaultAndProject(t *testing.T) {
 	}
 }
 
+func TestResolve_ProxyBlockCarried(t *testing.T) {
+	path := writeCfg(t, `{
+		"default": {"proxy": {"allow": ["api.anthropic.com"]}},
+		"projects": {"/work/foo": {"extra_allow": ["pypi.org"]}}
+	}`)
+	got := Resolve(path, "/work/foo", Effective{})
+
+	if got.Proxy == nil {
+		t.Fatal("Proxy should be set")
+	}
+	want := []string{"api.anthropic.com", "pypi.org"}
+	if !reflect.DeepEqual(got.Proxy.Allow, want) {
+		t.Fatalf("Proxy.Allow = %#v, want %#v", got.Proxy.Allow, want)
+	}
+}
+
+func TestResolve_NoProxyBlock_NilProxy(t *testing.T) {
+	path := writeCfg(t, `{"default": {"mounts": ["/x"]}}`)
+	got := Resolve(path, "/x", Effective{})
+	if got.Proxy != nil {
+		t.Fatalf("Proxy should be nil when unconfigured, got %#v", got.Proxy)
+	}
+}
+
 func contains(xs []string, want string) bool {
 	for _, x := range xs {
 		if x == want {

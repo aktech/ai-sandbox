@@ -33,6 +33,17 @@ type Project struct {
 	Mounts      []string `json:"mounts,omitempty"`       // declarative mount list (replaces defaults)
 	ExtraMounts []string `json:"extra_mounts,omitempty"` // appended after mounts
 	Ports       []string `json:"ports,omitempty"`        // "host:container" port publishes
+
+	Proxy      *ProxyBlock `json:"proxy,omitempty"`       // egress proxy config
+	ExtraAllow []string    `json:"extra_allow,omitempty"` // appended to Proxy.Allow
+}
+
+// ProxyBlock is the raw proxy config from JSON. The proxy package parses the
+// inject rules; cfg only merges allow lists and passes the block on, so it
+// keeps the inject rules as raw JSON and avoids depending on the proxy package.
+type ProxyBlock struct {
+	Allow  []string                   `json:"allow"`
+	Inject map[string]json.RawMessage `json:"inject,omitempty"`
 }
 
 // File is the top-level JSON document.
@@ -51,6 +62,7 @@ type Effective struct {
 	Mounts      []string
 	ExtraMounts []string
 	Ports       []string
+	Proxy       *ProxyBlock
 }
 
 // Resolve loads `path`, merges Default and the project entry keyed by
@@ -81,6 +93,21 @@ func Resolve(path, project string, base Effective) Effective {
 		cfg.Mounts = append(cfg.Mounts, p.Mounts...)
 		cfg.ExtraMounts = append(cfg.ExtraMounts, p.ExtraMounts...)
 		cfg.Ports = append(cfg.Ports, p.Ports...)
+		if p.Proxy != nil {
+			if cfg.Proxy == nil {
+				cfg.Proxy = &ProxyBlock{Inject: map[string]json.RawMessage{}}
+			}
+			cfg.Proxy.Allow = append(cfg.Proxy.Allow, p.Proxy.Allow...)
+			for k, v := range p.Proxy.Inject {
+				cfg.Proxy.Inject[k] = v
+			}
+		}
+		if len(p.ExtraAllow) > 0 {
+			if cfg.Proxy == nil {
+				cfg.Proxy = &ProxyBlock{Inject: map[string]json.RawMessage{}}
+			}
+			cfg.Proxy.Allow = append(cfg.Proxy.Allow, p.ExtraAllow...)
+		}
 	}
 	apply(raw.Default)
 	// Apply every project entry whose key matches `project`, least-specific
