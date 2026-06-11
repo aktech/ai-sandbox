@@ -157,7 +157,8 @@ Then add a `proxy` block to your config:
     }
   },
   "projects": {
-    "/Users/me/dev/my-project": { "extra_allow": ["files.pythonhosted.org"] }
+    "/Users/me/dev/my-project": { "extra_allow": ["files.pythonhosted.org"] },
+    "/Users/me/dev/scratch":    { "proxy": { "allow": ["*"] } }
   }
 }
 ```
@@ -168,7 +169,24 @@ Then add a `proxy` block to your config:
 - `inject` says which header to rewrite per host. `format` wraps the value
   (e.g. `Bearer %s`); `basic` handles `git push` over HTTPS, which sends the
   token as the password half of a Basic-auth header.
-- `extra_allow` (per project) appends hosts to the allowlist.
+- `default.proxy.allow` is the **universal** list, applied to every project.
+
+### Per-project allowlists
+
+The single shared proxy enforces a **different allowlist per project**. It tells
+which project a request came from by the sandbox's own network, so each
+project's rules are isolated from the others.
+
+- `extra_allow` (per project) adds hosts on top of the universal list for that
+  project only.
+- A per-project `"proxy": { "allow": [...] }` block adds more hosts for that
+  project. Use `"allow": ["*"]` to make a project **unrestricted** (reach any
+  host). Even an unrestricted project still has its secrets injected and kept
+  out of the container; only the egress limits are lifted.
+
+Rules update live: entering a project pushes its allowlist to the running proxy
+(no master password needed, since rule updates carry no secrets). Removing a
+sandbox (`psb rm`) drops that project's rules.
 
 Once a `proxy` block is present, `psb` starts the proxy and the private
 network automatically. With no `proxy` block, `psb` behaves exactly as before.
