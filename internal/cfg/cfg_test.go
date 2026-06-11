@@ -118,6 +118,77 @@ func TestResolve_PortsMergeDefaultAndProject(t *testing.T) {
 	}
 }
 
+func TestResolve_ProxyBlockCarried(t *testing.T) {
+	path := writeCfg(t, `{
+		"default": {"proxy": {"allow": ["api.anthropic.com"]}},
+		"projects": {"/work/foo": {"extra_allow": ["pypi.org"]}}
+	}`)
+	got := Resolve(path, "/work/foo", Effective{})
+
+	if got.Proxy == nil {
+		t.Fatal("Proxy should be set")
+	}
+	want := []string{"api.anthropic.com", "pypi.org"}
+	if !reflect.DeepEqual(got.Proxy.Allow, want) {
+		t.Fatalf("Proxy.Allow = %#v, want %#v", got.Proxy.Allow, want)
+	}
+}
+
+// A project's own proxy.allow REPLACES the universal allow (so a project can
+// be narrowed below a permissive default like ["*"]). extra_allow still appends.
+func TestResolve_ProjectAllowReplacesUniversal(t *testing.T) {
+	path := writeCfg(t, `{
+		"default":  {"proxy": {"allow": ["*"]}},
+		"projects": {"/work/locked": {"proxy": {"allow": ["only.com"]}, "extra_allow": ["plus.com"]}}
+	}`)
+	got := Resolve(path, "/work/locked", Effective{})
+	want := []string{"only.com", "plus.com"}
+	if !reflect.DeepEqual(got.Proxy.Allow, want) {
+		t.Fatalf("Proxy.Allow = %#v, want %#v (project allow must replace universal)", got.Proxy.Allow, want)
+	}
+}
+
+// A project with only extra_allow keeps the universal allow and appends to it.
+func TestResolve_ExtraAllowAppendsToUniversal(t *testing.T) {
+	path := writeCfg(t, `{
+		"default":  {"proxy": {"allow": ["base.com"]}},
+		"projects": {"/work/x": {"extra_allow": ["more.com"]}}
+	}`)
+	got := Resolve(path, "/work/x", Effective{})
+	want := []string{"base.com", "more.com"}
+	if !reflect.DeepEqual(got.Proxy.Allow, want) {
+		t.Fatalf("Proxy.Allow = %#v, want %#v", got.Proxy.Allow, want)
+	}
+}
+
+// A project with an explicit empty allow blocks everything: the per-project
+// proxy block fully replaces the universal one (including dropping inherited
+// inject), so an empty allow yields a true airgap.
+func TestResolve_EmptyAllowBlocksEverything(t *testing.T) {
+	path := writeCfg(t, `{
+		"default":  {"proxy": {"allow": ["*"], "inject": {"api.github.com": {"header":"Authorization","secret":"github"}}}},
+		"projects": {"/dev/airgapped": {"proxy": {"allow": []}}}
+	}`)
+	got := Resolve(path, "/dev/airgapped", Effective{})
+	if got.Proxy == nil {
+		t.Fatal("Proxy should be set")
+	}
+	if len(got.Proxy.Allow) != 0 {
+		t.Fatalf("airgapped allow must be empty, got %#v", got.Proxy.Allow)
+	}
+	if len(got.Proxy.Inject) != 0 {
+		t.Fatalf("airgapped must not inherit default inject, got %#v", got.Proxy.Inject)
+	}
+}
+
+func TestResolve_NoProxyBlock_NilProxy(t *testing.T) {
+	path := writeCfg(t, `{"default": {"mounts": ["/x"]}}`)
+	got := Resolve(path, "/x", Effective{})
+	if got.Proxy != nil {
+		t.Fatalf("Proxy should be nil when unconfigured, got %#v", got.Proxy)
+	}
+}
+
 func contains(xs []string, want string) bool {
 	for _, x := range xs {
 		if x == want {

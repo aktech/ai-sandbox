@@ -33,6 +33,23 @@ type Project struct {
 	Mounts      []string `json:"mounts,omitempty"`       // declarative mount list (replaces defaults)
 	ExtraMounts []string `json:"extra_mounts,omitempty"` // appended after mounts
 	Ports       []string `json:"ports,omitempty"`        // "host:container" port publishes
+
+	Proxy      *ProxyBlock `json:"proxy,omitempty"`       // egress proxy config
+	ExtraAllow []string    `json:"extra_allow,omitempty"` // appended to Proxy.Allow
+}
+
+// ProxyBlock is the raw proxy config from JSON. The proxy package parses the
+// inject rules; cfg only merges allow lists and passes the block on, so it
+// keeps the inject rules as raw JSON and avoids depending on the proxy package.
+type ProxyBlock struct {
+	Allow  []string                   `json:"allow"`
+	Inject map[string]json.RawMessage `json:"inject,omitempty"`
+	// Env maps a secret name to the environment variable the sandbox sets to
+	// that secret's sentinel, e.g. {"github": "GH_TOKEN"}. This is how a tool
+	// inside the sandbox is told it is "authenticated" without ever seeing the
+	// real value; the proxy swaps the sentinel for the real secret on the way
+	// out. Fully config-driven: no secret name or env var is hardcoded.
+	Env map[string]string `json:"env,omitempty"`
 }
 
 // File is the top-level JSON document.
@@ -51,6 +68,7 @@ type Effective struct {
 	Mounts      []string
 	ExtraMounts []string
 	Ports       []string
+	Proxy       *ProxyBlock
 }
 
 // Resolve loads `path`, merges Default and the project entry keyed by
@@ -81,6 +99,32 @@ func Resolve(path, project string, base Effective) Effective {
 		cfg.Mounts = append(cfg.Mounts, p.Mounts...)
 		cfg.ExtraMounts = append(cfg.ExtraMounts, p.ExtraMounts...)
 		cfg.Ports = append(cfg.Ports, p.Ports...)
+		if p.Proxy != nil {
+			// A proxy block fully defines the proxy for this scope, REPLACING any
+			// inherited one (allow + inject + env). The default block sets the
+			// baseline; a project that specifies its own proxy block overrides it
+			// wholesale. This is what lets a project set "allow": [] to block
+			// everything (and drop the inherited inject) for a true airgap. To
+			// only add hosts on top of the default, use extra_allow instead.
+			np := &ProxyBlock{
+				Allow:  append([]string(nil), p.Proxy.Allow...),
+				Inject: map[string]json.RawMessage{},
+				Env:    map[string]string{},
+			}
+			for k, v := range p.Proxy.Inject {
+				np.Inject[k] = v
+			}
+			for k, v := range p.Proxy.Env {
+				np.Env[k] = v
+			}
+			cfg.Proxy = np
+		}
+		if len(p.ExtraAllow) > 0 {
+			if cfg.Proxy == nil {
+				cfg.Proxy = &ProxyBlock{Inject: map[string]json.RawMessage{}}
+			}
+			cfg.Proxy.Allow = append(cfg.Proxy.Allow, p.ExtraAllow...)
+		}
 	}
 	apply(raw.Default)
 	// Apply every project entry whose key matches `project`, least-specific

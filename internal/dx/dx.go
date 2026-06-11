@@ -6,6 +6,7 @@
 package dx
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -23,6 +24,9 @@ type Executor interface {
 	Run(args ...string) error
 	// RunSilent discards stdout+stderr and returns the exit error.
 	RunSilent(args ...string) error
+	// RunWithStdin runs argv feeding stdin to the process, discarding output.
+	// Used to pipe the proxy's CA + secrets payload to `docker run -i`.
+	RunWithStdin(stdin []byte, args ...string) error
 	// Replace replaces the current process via syscall.Exec.
 	// Returns only on failure to exec.
 	Replace(args ...string) error
@@ -55,6 +59,12 @@ func (c Cmd) RunSilent(args ...string) error {
 	return exec.Command(c.bin(), args...).Run()
 }
 
+func (c Cmd) RunWithStdin(stdin []byte, args ...string) error {
+	cmd := exec.Command(c.bin(), args...)
+	cmd.Stdin = bytes.NewReader(stdin)
+	return cmd.Run()
+}
+
 func (c Cmd) Replace(args ...string) error {
 	path, err := exec.LookPath(c.bin())
 	if err != nil {
@@ -78,6 +88,7 @@ type ContainerSpec struct {
 	Env      map[string]string // -e K=V (empty values skipped)
 	Mounts   []string          // -v <entry> per item; each is a "src:dest" spec
 	Ports    []string          // -p <entry> per item; each is a "host:container" spec
+	Network  string            // --network (empty = docker default bridge)
 }
 
 // Info is the parsed output of Inspect for one container.
@@ -175,6 +186,9 @@ func Create(e Executor, s ContainerSpec) error {
 		"--memory", s.Memory,
 		"--cpus", s.CPUs,
 		"--hostname", host,
+	}
+	if s.Network != "" {
+		args = append(args, "--network", s.Network)
 	}
 	for k, v := range s.Labels {
 		args = append(args, "--label", k+"="+v)

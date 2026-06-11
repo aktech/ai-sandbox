@@ -16,6 +16,7 @@ import (
 	"github.com/aktech/ai-sandbox/internal/cfg"
 	"github.com/aktech/ai-sandbox/internal/dx"
 	"github.com/aktech/ai-sandbox/internal/mountresolver"
+	"github.com/aktech/ai-sandbox/internal/proxy"
 )
 
 // Logger is the subset of psb's logger that command handlers need. Defining
@@ -33,6 +34,10 @@ type Logger interface {
 type Handler struct {
 	Log    Logger
 	Docker dx.Executor
+
+	// caHostPath is the host path of the proxy CA cert, stashed by ensure when
+	// proxy mode is active so create/buildSpec can mount it into the sandbox.
+	caHostPath string
 }
 
 // ensure creates the container (or starts it if it already exists) without
@@ -42,6 +47,33 @@ func (h Handler) ensure(name string, c cfg.Effective, home, cwd string, extraLab
 
 	if !dx.ImageExists(h.Docker, c.Image) {
 		return fmt.Errorf("image %s not found — run `psb build`", c.Image)
+	}
+
+	// Proxy mode: bring up the shared credential proxy and the sandbox's own
+	// internal network before creating/starting the container. caHostPath is
+	// just a path (no unlock needed) so create -> buildSpec can mount the CA.
+	// The master password is only required to (re)start the proxy, so when the
+	// proxy is already running we skip the unlock entirely and re-entering a
+	// sandbox is prompt-free.
+	if c.Proxy != nil {
+		h.caHostPath = caCertPath()
+		if !dx.ContainerRunning(h.Docker, proxyContainer) {
+			payload, _, err := h.proxyPayload(c)
+			if err != nil {
+				return err
+			}
+			if err := ensureProxyRunning(h.Docker, proxyImage(), payload); err != nil {
+				return fmt.Errorf("start proxy: %w", err)
+			}
+		}
+		if err := setupSandboxNet(h.Docker, name); err != nil {
+			return fmt.Errorf("setup sandbox network: %w", err)
+		}
+		// Push this project's allowlist to the proxy (no password needed). The
+		// proxy merges it by subnet, so other sandboxes keep their own rules.
+		if err := deliverRules(h.Docker, c, name); err != nil {
+			return fmt.Errorf("deliver proxy rules: %w", err)
+		}
 	}
 
 	if dx.ContainerExists(h.Docker, name) {
@@ -105,6 +137,10 @@ func (h Handler) RM(name string) error {
 	if err := dx.Remove(h.Docker, name); err != nil {
 		return err
 	}
+	// Tear down the sandbox's private network if proxy mode created one. The
+	// shared proxy container is left running for other sandboxes; stop it
+	// explicitly with `psb proxy stop`.
+	teardownSandboxNet(h.Docker, name)
 	h.Log.OK("removed")
 	return nil
 }
@@ -175,26 +211,54 @@ func (h Handler) create(name string, c cfg.Effective, home, cwd string, extraLab
 	if err := os.MkdirAll(c.SharedDir, 0o755); err != nil {
 		return err
 	}
+	spec := buildSpec(name, c, home, cwd, extraLabels, h.caHostPath, h.Log)
+	return dx.Create(h.Docker, spec)
+}
+
+// caInContainer is where the proxy's CA cert is mounted inside the sandbox.
+const caInContainer = "/etc/psb/ca.crt"
+
+// buildSpec assembles the docker run spec. When c.Proxy is nil it reproduces
+// the original behavior exactly (real ANTHROPIC_API_KEY, default network). When
+// c.Proxy is set it swaps secret env vars for sentinels, attaches the sandbox
+// to its private internal network, mounts the CA cert read-only, and points the
+// standard CA env vars at it so claude/gh/git/curl trust the MITM proxy.
+func buildSpec(name string, c cfg.Effective, home, cwd string, extraLabels map[string]string, caHostPath string, warn mountresolver.Warner) dx.ContainerSpec {
 	mounts := mountresolver.Resolve(c.Mounts, c.ExtraMounts,
-		mountresolver.Env{Home: home, CWD: cwd, SharedDir: c.SharedDir}, h.Log)
+		mountresolver.Env{Home: home, CWD: cwd, SharedDir: c.SharedDir}, warn)
 	labels := map[string]string{"psb.cwd": cwd}
 	for k, v := range extraLabels {
 		labels[k] = v
 	}
-	return dx.Create(h.Docker, dx.ContainerSpec{
-		Name:    name,
-		Image:   c.Image,
-		Memory:  c.Memory,
-		CPUs:    c.CPUs,
-		Workdir: cwd,
-		Labels:  labels,
-		Env: map[string]string{
-			"HOME":              home,
-			"SB_SHARED":         c.SharedDir,
-			"HOMELAB_URL":       os.Getenv("HOMELAB_URL"),
-			"ANTHROPIC_API_KEY": os.Getenv("ANTHROPIC_API_KEY"),
-		},
-		Mounts: mounts,
-		Ports:  c.Ports,
-	})
+	env := map[string]string{
+		"HOME":        home,
+		"SB_SHARED":   c.SharedDir,
+		"HOMELAB_URL": os.Getenv("HOMELAB_URL"),
+	}
+	spec := dx.ContainerSpec{
+		Name: name, Image: c.Image, Memory: c.Memory, CPUs: c.CPUs,
+		Workdir: cwd, Labels: labels, Env: env, Mounts: mounts, Ports: c.Ports,
+	}
+	if c.Proxy == nil {
+		env["ANTHROPIC_API_KEY"] = os.Getenv("ANTHROPIC_API_KEY")
+		return spec
+	}
+	// Proxy mode: no real secrets enter the container.
+	spec.Network = networkName(name)
+	proxyURL := "http://" + proxyContainer + ":8080"
+	env["HTTPS_PROXY"] = proxyURL
+	env["HTTP_PROXY"] = proxyURL
+	env["NO_PROXY"] = "localhost,127.0.0.1"
+	spec.Mounts = append(spec.Mounts, caHostPath+":"+caInContainer+":ro")
+	for _, v := range []string{"SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS",
+		"REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO"} {
+		env[v] = caInContainer
+	}
+	// Sentinels: for each secret the config maps to an env var, set that env
+	// var to the secret's sentinel. Entirely config-driven (proxy.env); no
+	// secret name or env var is hardcoded.
+	for sec, ev := range c.Proxy.Env {
+		env[ev] = proxy.Sentinel(sec)
+	}
+	return spec
 }
