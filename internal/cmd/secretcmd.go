@@ -3,9 +3,11 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/aktech/ai-sandbox/internal/ca"
 	"github.com/aktech/ai-sandbox/internal/cfg"
@@ -126,7 +128,10 @@ func (h Handler) ProxyInit() error {
 	return nil
 }
 
-// SecretSet reads a value for name (no echo) and stores it.
+// SecretSet stores a value for name. The value is read from stdin when piped
+// (e.g. `grep ... | psb secret set github`) or prompted without echo at a
+// terminal. It is never passed as an argument, so it cannot leak via shell
+// history or the process table.
 func (h Handler) SecretSet(name string) error {
 	pw, err := masterPassword("master password: ")
 	if err != nil {
@@ -136,16 +141,32 @@ func (h Handler) SecretSet(name string) error {
 	if err != nil {
 		return err
 	}
-	val, err := masterPassword(fmt.Sprintf("value for %q: ", name))
+	val, err := readSecretValue(name)
 	if err != nil {
 		return err
 	}
-	secrets[name] = string(val)
+	secrets[name] = val
 	if err := secret.Save(secretsPath(), pw, secrets); err != nil {
 		return err
 	}
 	h.Log.OK("stored secret " + name)
 	return nil
+}
+
+// readSecretValue reads a secret value: piped stdin (trailing newline trimmed)
+// when stdin is not a terminal, otherwise a no-echo prompt.
+func readSecretValue(name string) (string, error) {
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		fmt.Fprintf(os.Stderr, "value for %q: ", name)
+		v, err := term.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Fprintln(os.Stderr)
+		return string(v), err
+	}
+	data, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(string(data), "\r\n"), nil
 }
 
 // SecretRM deletes a secret by name.
