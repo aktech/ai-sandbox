@@ -30,15 +30,13 @@ func caCertPath() string  { return filepath.Join(configDir(), "ca.crt") }
 func caKeyPath() string   { return filepath.Join(configDir(), "ca.key") }
 
 // masterPassword returns the store password from PSB_MASTER_PASSWORD if set
-// (the non-interactive path), otherwise prompts without echoing.
+// (the non-interactive path), otherwise prompts at the terminal, echoing one
+// '*' per typed character.
 func masterPassword(prompt string) ([]byte, error) {
 	if v := os.Getenv("PSB_MASTER_PASSWORD"); v != "" {
 		return []byte(v), nil
 	}
-	fmt.Fprint(os.Stderr, prompt)
-	pw, err := term.ReadPassword(int(os.Stdin.Fd()))
-	fmt.Fprintln(os.Stderr)
-	return pw, err
+	return readPasswordMasked(int(os.Stdin.Fd()), prompt)
 }
 
 // secretsPayload builds the JSON delivered to the proxy once at start: CA
@@ -139,9 +137,7 @@ func (h Handler) SecretSet(name string) error {
 // when stdin is not a terminal, otherwise a no-echo prompt.
 func readSecretValue(name string) (string, error) {
 	if term.IsTerminal(int(os.Stdin.Fd())) {
-		fmt.Fprintf(os.Stderr, "value for %q: ", name)
-		v, err := term.ReadPassword(int(os.Stdin.Fd()))
-		fmt.Fprintln(os.Stderr)
+		v, err := readPasswordMasked(int(os.Stdin.Fd()), fmt.Sprintf("value for %q: ", name))
 		return string(v), err
 	}
 	data, err := io.ReadAll(os.Stdin)
