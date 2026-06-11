@@ -1,10 +1,6 @@
 package proxy
 
-import (
-	"testing"
-
-	"github.com/aktech/ai-sandbox/internal/ca"
-)
+import "testing"
 
 func mkRules(t *testing.T) *compiledRules {
 	t.Helper()
@@ -60,46 +56,47 @@ func TestAllowlistFor_PerSubnet(t *testing.T) {
 	}
 }
 
-func TestUpdateRules_MergesSubnetsByCIDR(t *testing.T) {
-	caCert, caKey, _ := ca.Generate("test")
-	srv, err := New(map[string]string{}, caCert, caKey)
+func TestCombineRuleSets_UnionsProjectsKeepsGlobals(t *testing.T) {
+	// One file per project (as the proxy reads them from rules.d).
+	a := RuleSet{
+		Universal: []string{"u.com"},
+		Inject:    map[string]InjectRule{"inj.com": {Header: "x", Secret: "s"}},
+		Projects:  []Subnet{{CIDR: "10.0.0.0/8", Allow: []string{"a.com"}}},
+	}
+	b := RuleSet{
+		Universal: []string{"u.com"},
+		Projects:  []Subnet{{CIDR: "172.16.0.0/12", Allow: []string{"b.com"}}},
+	}
+	combined := CombineRuleSets([]RuleSet{a, b})
+
+	c, err := compile(combined)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Project A delivers its own subnet.
-	if err := srv.UpdateRules(RuleSet{
-		Universal: []string{"u.com"},
-		Projects:  []Subnet{{CIDR: "10.0.0.0/8", Allow: []string{"a.com"}}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	// Project B delivers only its subnet; A's must survive.
-	if err := srv.UpdateRules(RuleSet{
-		Universal: []string{"u.com"},
-		Projects:  []Subnet{{CIDR: "172.16.0.0/12", Allow: []string{"b.com"}}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	c := srv.rules.Load()
 	if !c.allowlistFor("10.1.1.1:1").Allowed("a.com") {
-		t.Error("project A subnet must survive project B's update")
+		t.Error("project A subnet missing from combined set")
 	}
 	if !c.allowlistFor("172.16.0.1:1").Allowed("b.com") {
-		t.Error("project B subnet must be present")
+		t.Error("project B subnet missing from combined set")
 	}
-	// Re-delivering A's CIDR with a new allow replaces it.
-	if err := srv.UpdateRules(RuleSet{
-		Universal: []string{"u.com"},
-		Projects:  []Subnet{{CIDR: "10.0.0.0/8", Allow: []string{"a2.com"}}},
-	}); err != nil {
-		t.Fatal(err)
+	// Universal and inject survive even though only A supplied inject.
+	if !c.allowlistFor("8.8.8.8:1").Allowed("u.com") || !c.allowlistFor("8.8.8.8:1").Allowed("inj.com") {
+		t.Error("universal/inject lost in combine")
 	}
-	c = srv.rules.Load()
-	if c.allowlistFor("10.1.1.1:1").Allowed("a.com") {
-		t.Error("old a.com should be gone after re-delivering the CIDR")
+	// A's subnet must NOT inherit B's allow and vice versa.
+	if c.allowlistFor("10.1.1.1:1").Allowed("b.com") {
+		t.Error("project A leaked project B's allow")
 	}
-	if !c.allowlistFor("10.1.1.1:1").Allowed("a2.com") {
-		t.Error("new a2.com should be active")
+}
+
+func TestCombineRuleSets_LastCIDRWins(t *testing.T) {
+	combined := CombineRuleSets([]RuleSet{
+		{Projects: []Subnet{{CIDR: "10.0.0.0/8", Allow: []string{"old.com"}}}},
+		{Projects: []Subnet{{CIDR: "10.0.0.0/8", Allow: []string{"new.com"}}}},
+	})
+	c, _ := compile(combined)
+	if c.allowlistFor("10.0.0.1:1").Allowed("old.com") || !c.allowlistFor("10.0.0.1:1").Allowed("new.com") {
+		t.Fatal("same CIDR should be replaced by the later file")
 	}
 }
 

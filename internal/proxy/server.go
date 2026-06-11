@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"sync"
 	"sync/atomic"
 
 	"github.com/elazarl/goproxy"
@@ -29,9 +28,6 @@ type Server struct {
 	proxy   *goproxy.ProxyHttpServer
 	secrets map[string]string
 	rules   atomic.Pointer[compiledRules]
-
-	mu      sync.Mutex // guards current during merge
-	current RuleSet    // last-merged rule set, source for recompiles
 
 	mitm   *goproxy.ConnectAction
 	tunnel *goproxy.ConnectAction
@@ -103,42 +99,17 @@ func New(secrets map[string]string, caCertPEM, caKeyPEM []byte) (*Server, error)
 	return s, nil
 }
 
-// UpdateRules merges rs into the active rule set and recompiles atomically.
-// Universal and Inject replace the previous globals; each project subnet is
-// upserted by CIDR, so one sandbox delivering its own subnet does not wipe the
-// rules of other sandboxes. Safe to call concurrently with in-flight requests.
+// UpdateRules atomically replaces the active rule set and recompiles. The
+// caller (the proxy's rule watcher) passes the full rule set rebuilt from every
+// project's file, so replace is correct and lossless. Safe to call concurrently
+// with in-flight requests.
 func (s *Server) UpdateRules(rs RuleSet) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	merged := s.current
-	merged.Universal = rs.Universal
-	merged.Inject = rs.Inject
-	merged.Projects = upsertSubnets(merged.Projects, rs.Projects)
-
-	c, err := compile(merged)
+	c, err := compile(rs)
 	if err != nil {
 		return err
 	}
-	s.current = merged
 	s.rules.Store(c)
 	return nil
-}
-
-// upsertSubnets replaces existing entries with the same CIDR and appends new
-// ones, preserving subnets that the incoming update does not mention.
-func upsertSubnets(existing, incoming []Subnet) []Subnet {
-	out := make([]Subnet, 0, len(existing)+len(incoming))
-	replaced := map[string]bool{}
-	for _, in := range incoming {
-		replaced[in.CIDR] = true
-	}
-	for _, e := range existing {
-		if !replaced[e.CIDR] {
-			out = append(out, e)
-		}
-	}
-	return append(out, incoming...)
 }
 
 // Handler exposes the proxy as an http.Handler (used by tests and main).

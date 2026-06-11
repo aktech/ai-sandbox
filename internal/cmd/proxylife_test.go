@@ -31,8 +31,8 @@ func TestWritePayloadExecArgs(t *testing.T) {
 }
 
 func TestWriteRulesExecArgs(t *testing.T) {
-	got := writeRulesExecArgs("psb-proxy")
-	want := []string{"exec", "-i", "psb-proxy", "/psb-proxy", "--write-rules"}
+	got := writeRulesExecArgs("psb-proxy", "psb-proja")
+	want := []string{"exec", "-i", "psb-proxy", "/psb-proxy", "--write-rules", "psb-proja"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("writeRulesExecArgs = %#v\nwant %#v", got, want)
 	}

@@ -24,6 +24,35 @@ type RuleSet struct {
 	Inject    map[string]InjectRule `json:"inject"`
 }
 
+// CombineRuleSets unions several per-project rule sets (one per sandbox file)
+// into the single rule set the proxy enforces. Project subnets accumulate
+// (deduped by CIDR, last write wins); Universal and Inject are taken from any
+// set that supplies them (they are identical across projects, derived from the
+// shared default config).
+func CombineRuleSets(sets []RuleSet) RuleSet {
+	out := RuleSet{Inject: map[string]InjectRule{}}
+	byCIDR := map[string]Subnet{}
+	var order []string
+	for _, rs := range sets {
+		if len(rs.Universal) > 0 {
+			out.Universal = rs.Universal
+		}
+		for h, r := range rs.Inject {
+			out.Inject[h] = r
+		}
+		for _, s := range rs.Projects {
+			if _, seen := byCIDR[s.CIDR]; !seen {
+				order = append(order, s.CIDR)
+			}
+			byCIDR[s.CIDR] = s
+		}
+	}
+	for _, cidr := range order {
+		out.Projects = append(out.Projects, byCIDR[cidr])
+	}
+	return out
+}
+
 type compiledSubnet struct {
 	net   *net.IPNet
 	allow []string

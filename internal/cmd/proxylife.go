@@ -42,10 +42,17 @@ func writePayloadExecArgs(name string) []string {
 	return []string{"exec", "-i", name, "/psb-proxy", "--write-payload"}
 }
 
-// writeRulesExecArgs builds argv to deliver an updated rule set (no secrets) to
-// a running proxy via stdin. The proxy hot-swaps its allowlist.
-func writeRulesExecArgs(name string) []string {
-	return []string{"exec", "-i", name, "/psb-proxy", "--write-rules"}
+// writeRulesExecArgs builds argv to deliver one project's rule file (no
+// secrets) to a running proxy via stdin. key names the per-project file, so
+// concurrent psb runs never clobber each other's rules.
+func writeRulesExecArgs(proxyName, key string) []string {
+	return []string{"exec", "-i", proxyName, "/psb-proxy", "--write-rules", key}
+}
+
+// rmRulesExecArgs builds argv to drop a project's rule file when its sandbox is
+// removed, so the proxy stops carrying that subnet's allowances.
+func rmRulesExecArgs(proxyName, key string) []string {
+	return []string{"exec", proxyName, "/psb-proxy", "--rm-rules", key}
 }
 
 // networkSubnet returns the CIDR of a docker network, e.g. "172.20.0.0/16".
@@ -89,7 +96,8 @@ func parseProxyBlock(p *cfg.ProxyBlock) (*proxy.Config, error) {
 }
 
 // deliverRules computes the current project's rule update and pushes it to the
-// running proxy. No master password is needed (the update carries no secrets).
+// running proxy as that project's own rule file. No master password is needed
+// (the update carries no secrets).
 func deliverRules(e dx.Executor, c cfg.Effective, container string) error {
 	cidr, err := networkSubnet(e, networkName(container))
 	if err != nil {
@@ -103,7 +111,7 @@ func deliverRules(e dx.Executor, c cfg.Effective, container string) error {
 	if err != nil {
 		return err
 	}
-	return e.RunWithStdin(payload, writeRulesExecArgs(proxyContainer)...)
+	return e.RunWithStdin(payload, writeRulesExecArgs(proxyContainer, container)...)
 }
 
 // internalNetCreateArgs builds argv to create a sandbox's --internal network.
@@ -165,8 +173,12 @@ func setupSandboxNet(e dx.Executor, container string) error {
 	return nil
 }
 
-// teardownSandboxNet disconnects the proxy and removes the sandbox's network.
+// teardownSandboxNet drops the project's proxy rule file, disconnects the proxy
+// and removes the sandbox's network.
 func teardownSandboxNet(e dx.Executor, container string) {
+	if dx.ContainerRunning(e, proxyContainer) {
+		_ = e.RunSilent(rmRulesExecArgs(proxyContainer, container)...)
+	}
 	net := networkName(container)
 	if networkExists(e, net) {
 		_ = e.RunSilent(netDisconnectArgs(net, proxyContainer)...)
