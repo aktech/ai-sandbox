@@ -1,12 +1,21 @@
 package cmd
 
 import (
+	"os"
 	"strings"
 
 	"github.com/aktech/ai-sandbox/internal/dx"
 )
 
 const proxyContainer = "psb-proxy"
+
+// proxyImage returns the proxy container image, overridable for testing/CI.
+func proxyImage() string {
+	if v := os.Getenv("PSB_PROXY_IMAGE"); v != "" {
+		return v
+	}
+	return "ai-sandbox-proxy:latest"
+}
 
 // networkName maps a sandbox container name to its private network name.
 func networkName(container string) string {

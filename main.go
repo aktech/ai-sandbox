@@ -182,6 +182,12 @@ Usage:
   psb status       show container status
   psb ls           list all psb-* containers
   psb build        (re)build the image
+  psb proxy init   generate the egress-proxy CA + secret store
+  psb proxy stop   stop the shared credential proxy
+  psb proxy log    stream the proxy's allow/deny log
+  psb secret set <name>   store a secret (no echo)
+  psb secret rm  <name>   remove a secret
+  psb secret ls           list stored secret names
 
 Config file (JSON):
   ` + filepath.Join(os.Getenv("HOME"), ".config/ai-sandbox/config.json") + `
@@ -300,9 +306,55 @@ func main() {
 		dieOn(h.LS())
 	case "build":
 		dieOn(cmdBuild(log))
+	case "secret":
+		// psb secret set|rm|ls <name>
+		dieOn(dispatchSecret(h, os.Args[2:]))
+	case "proxy":
+		// psb proxy init|stop|log
+		dieOn(dispatchProxy(h, os.Args[2:]))
 	case "-h", "--help", "help":
 		usage()
 	default:
-		log.Die("unknown command: "+sub+" (use: up | stop | rm | status | ls | build)", 2)
+		log.Die("unknown command: "+sub+" (use: up | stop | rm | status | ls | build | secret | proxy)", 2)
+	}
+}
+
+// dispatchSecret routes `psb secret <action> [name]`.
+func dispatchSecret(h cmd.Handler, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: psb secret set|rm|ls [name]")
+	}
+	switch args[0] {
+	case "set":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: psb secret set <name>")
+		}
+		return h.SecretSet(args[1])
+	case "rm":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: psb secret rm <name>")
+		}
+		return h.SecretRM(args[1])
+	case "ls":
+		return h.SecretLS()
+	default:
+		return fmt.Errorf("unknown secret action %q (use: set | rm | ls)", args[0])
+	}
+}
+
+// dispatchProxy routes `psb proxy <action>`.
+func dispatchProxy(h cmd.Handler, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: psb proxy init|stop|log")
+	}
+	switch args[0] {
+	case "init":
+		return h.ProxyInit()
+	case "stop":
+		return h.ProxyStop()
+	case "log", "logs":
+		return h.ProxyLog()
+	default:
+		return fmt.Errorf("unknown proxy action %q (use: init | stop | log)", args[0])
 	}
 }
