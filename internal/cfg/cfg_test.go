@@ -161,6 +161,26 @@ func TestResolve_ExtraAllowAppendsToUniversal(t *testing.T) {
 	}
 }
 
+// A project with an explicit empty allow blocks everything: the per-project
+// proxy block fully replaces the universal one (including dropping inherited
+// inject), so an empty allow yields a true airgap.
+func TestResolve_EmptyAllowBlocksEverything(t *testing.T) {
+	path := writeCfg(t, `{
+		"default":  {"proxy": {"allow": ["*"], "inject": {"api.github.com": {"header":"Authorization","secret":"github"}}}},
+		"projects": {"/dev/airgapped": {"proxy": {"allow": []}}}
+	}`)
+	got := Resolve(path, "/dev/airgapped", Effective{})
+	if got.Proxy == nil {
+		t.Fatal("Proxy should be set")
+	}
+	if len(got.Proxy.Allow) != 0 {
+		t.Fatalf("airgapped allow must be empty, got %#v", got.Proxy.Allow)
+	}
+	if len(got.Proxy.Inject) != 0 {
+		t.Fatalf("airgapped must not inherit default inject, got %#v", got.Proxy.Inject)
+	}
+}
+
 func TestResolve_NoProxyBlock_NilProxy(t *testing.T) {
 	path := writeCfg(t, `{"default": {"mounts": ["/x"]}}`)
 	got := Resolve(path, "/x", Effective{})

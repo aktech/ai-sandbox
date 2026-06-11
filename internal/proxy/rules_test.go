@@ -8,7 +8,9 @@ func mkRules(t *testing.T) *compiledRules {
 		Universal: []string{"u.com"},
 		Inject:    map[string]InjectRule{"inj.com": {Header: "x", Secret: "s"}},
 		Projects: []Subnet{
-			{CIDR: "10.0.0.0/8", Allow: []string{"a.com"}},
+			// project A injects inj.com, so its own allow includes it (as the
+			// delivery step does via EffectiveAllow).
+			{CIDR: "10.0.0.0/8", Allow: []string{"a.com", "inj.com"}},
 			{CIDR: "172.16.0.0/12", Allow: []string{"b.com"}},
 			{CIDR: "192.168.5.0/24", Allow: []string{"*"}}, // unrestricted project
 		},
@@ -46,13 +48,23 @@ func TestAllowlistFor_PerSubnet(t *testing.T) {
 		t.Error("192.168.5/24 has * and should allow anything")
 	}
 
-	// unknown source subnet: only universal + inject hosts
-	o := c.allowlistFor("8.8.8.8:1")
-	if !o.Allowed("u.com") || !o.Allowed("inj.com") {
-		t.Error("unknown subnet should still get universal + inject hosts")
+	// inject host reachable only from the project that injects it (10/8), NOT
+	// from another project. This is what lets a project be fully airgapped even
+	// when other projects inject hosts.
+	if !a.Allowed("inj.com") {
+		t.Error("project A injects inj.com, so it should reach it")
 	}
-	if o.Allowed("a.com") || o.Allowed("b.com") {
-		t.Error("unknown subnet must not inherit any project's allow")
+	if b.Allowed("inj.com") {
+		t.Error("project B must NOT reach inj.com just because A injects it")
+	}
+
+	// unknown source subnet: only universal (no project allow, no inject hosts)
+	o := c.allowlistFor("8.8.8.8:1")
+	if !o.Allowed("u.com") {
+		t.Error("unknown subnet should still get universal")
+	}
+	if o.Allowed("inj.com") || o.Allowed("a.com") || o.Allowed("b.com") {
+		t.Error("unknown subnet must get nothing beyond universal")
 	}
 }
 
@@ -79,9 +91,13 @@ func TestCombineRuleSets_UnionsProjectsKeepsGlobals(t *testing.T) {
 	if !c.allowlistFor("172.16.0.1:1").Allowed("b.com") {
 		t.Error("project B subnet missing from combined set")
 	}
-	// Universal and inject survive even though only A supplied inject.
-	if !c.allowlistFor("8.8.8.8:1").Allowed("u.com") || !c.allowlistFor("8.8.8.8:1").Allowed("inj.com") {
-		t.Error("universal/inject lost in combine")
+	// Universal survives. The inject RULE survives in the map (used for the
+	// header swap), but injecting a host no longer auto-allows it everywhere.
+	if !c.allowlistFor("8.8.8.8:1").Allowed("u.com") {
+		t.Error("universal lost in combine")
+	}
+	if _, ok := combined.Inject["inj.com"]; !ok {
+		t.Error("inject rule lost in combine")
 	}
 	// A's subnet must NOT inherit B's allow and vice versa.
 	if c.allowlistFor("10.1.1.1:1").Allowed("b.com") {

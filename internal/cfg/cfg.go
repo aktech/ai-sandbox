@@ -100,24 +100,24 @@ func Resolve(path, project string, base Effective) Effective {
 		cfg.ExtraMounts = append(cfg.ExtraMounts, p.ExtraMounts...)
 		cfg.Ports = append(cfg.Ports, p.Ports...)
 		if p.Proxy != nil {
-			if cfg.Proxy == nil {
-				cfg.Proxy = &ProxyBlock{Inject: map[string]json.RawMessage{}}
-			}
-			// A non-empty allow REPLACES the accumulated list. The default sets
-			// the universal allow; a project that lists its own allow narrows
-			// (or widens) only itself. extra_allow always appends below.
-			if len(p.Proxy.Allow) > 0 {
-				cfg.Proxy.Allow = p.Proxy.Allow
+			// A proxy block fully defines the proxy for this scope, REPLACING any
+			// inherited one (allow + inject + env). The default block sets the
+			// baseline; a project that specifies its own proxy block overrides it
+			// wholesale. This is what lets a project set "allow": [] to block
+			// everything (and drop the inherited inject) for a true airgap. To
+			// only add hosts on top of the default, use extra_allow instead.
+			np := &ProxyBlock{
+				Allow:  append([]string(nil), p.Proxy.Allow...),
+				Inject: map[string]json.RawMessage{},
+				Env:    map[string]string{},
 			}
 			for k, v := range p.Proxy.Inject {
-				cfg.Proxy.Inject[k] = v
-			}
-			if len(p.Proxy.Env) > 0 && cfg.Proxy.Env == nil {
-				cfg.Proxy.Env = map[string]string{}
+				np.Inject[k] = v
 			}
 			for k, v := range p.Proxy.Env {
-				cfg.Proxy.Env[k] = v
+				np.Env[k] = v
 			}
+			cfg.Proxy = np
 		}
 		if len(p.ExtraAllow) > 0 {
 			if cfg.Proxy == nil {

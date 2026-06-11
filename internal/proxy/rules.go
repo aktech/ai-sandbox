@@ -59,19 +59,15 @@ type compiledSubnet struct {
 }
 
 type compiledRules struct {
-	universal   []string
-	injectHosts []string
-	inject      map[string]InjectRule
-	subnets     []compiledSubnet
+	universal []string
+	inject    map[string]InjectRule
+	subnets   []compiledSubnet
 }
 
 func compile(rs RuleSet) (*compiledRules, error) {
 	c := &compiledRules{
 		universal: rs.Universal,
 		inject:    rs.Inject,
-	}
-	for h := range rs.Inject {
-		c.injectHosts = append(c.injectHosts, h)
 	}
 	for _, s := range rs.Projects {
 		_, ipnet, err := net.ParseCIDR(s.CIDR)
@@ -84,12 +80,13 @@ func compile(rs RuleSet) (*compiledRules, error) {
 }
 
 // allowlistFor builds the effective allowlist for a request coming from srcAddr
-// ("ip" or "ip:port"): universal hosts + every inject host (inject implies
-// allow) + the allow list of whichever project subnet contains the source IP.
+// ("ip" or "ip:port"): the universal hosts plus the allow list of whichever
+// project subnet contains the source IP. A project's own inject hosts are
+// already folded into its subnet allow at delivery time (EffectiveAllow), so
+// they are reachable from that project only, not from every project.
 func (c *compiledRules) allowlistFor(srcAddr string) *Allowlist {
-	entries := make([]string, 0, len(c.universal)+len(c.injectHosts)+4)
+	entries := make([]string, 0, len(c.universal)+4)
 	entries = append(entries, c.universal...)
-	entries = append(entries, c.injectHosts...)
 	if ip := parseHostIP(srcAddr); ip != nil {
 		for _, s := range c.subnets {
 			if s.net.Contains(ip) {
