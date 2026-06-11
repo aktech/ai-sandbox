@@ -134,6 +134,33 @@ func TestResolve_ProxyBlockCarried(t *testing.T) {
 	}
 }
 
+// A project's own proxy.allow REPLACES the universal allow (so a project can
+// be narrowed below a permissive default like ["*"]). extra_allow still appends.
+func TestResolve_ProjectAllowReplacesUniversal(t *testing.T) {
+	path := writeCfg(t, `{
+		"default":  {"proxy": {"allow": ["*"]}},
+		"projects": {"/work/locked": {"proxy": {"allow": ["only.com"]}, "extra_allow": ["plus.com"]}}
+	}`)
+	got := Resolve(path, "/work/locked", Effective{})
+	want := []string{"only.com", "plus.com"}
+	if !reflect.DeepEqual(got.Proxy.Allow, want) {
+		t.Fatalf("Proxy.Allow = %#v, want %#v (project allow must replace universal)", got.Proxy.Allow, want)
+	}
+}
+
+// A project with only extra_allow keeps the universal allow and appends to it.
+func TestResolve_ExtraAllowAppendsToUniversal(t *testing.T) {
+	path := writeCfg(t, `{
+		"default":  {"proxy": {"allow": ["base.com"]}},
+		"projects": {"/work/x": {"extra_allow": ["more.com"]}}
+	}`)
+	got := Resolve(path, "/work/x", Effective{})
+	want := []string{"base.com", "more.com"}
+	if !reflect.DeepEqual(got.Proxy.Allow, want) {
+		t.Fatalf("Proxy.Allow = %#v, want %#v", got.Proxy.Allow, want)
+	}
+}
+
 func TestResolve_NoProxyBlock_NilProxy(t *testing.T) {
 	path := writeCfg(t, `{"default": {"mounts": ["/x"]}}`)
 	got := Resolve(path, "/x", Effective{})

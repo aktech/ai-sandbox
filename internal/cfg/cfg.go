@@ -97,7 +97,12 @@ func Resolve(path, project string, base Effective) Effective {
 			if cfg.Proxy == nil {
 				cfg.Proxy = &ProxyBlock{Inject: map[string]json.RawMessage{}}
 			}
-			cfg.Proxy.Allow = append(cfg.Proxy.Allow, p.Proxy.Allow...)
+			// A non-empty allow REPLACES the accumulated list. The default sets
+			// the universal allow; a project that lists its own allow narrows
+			// (or widens) only itself. extra_allow always appends below.
+			if len(p.Proxy.Allow) > 0 {
+				cfg.Proxy.Allow = p.Proxy.Allow
+			}
 			for k, v := range p.Proxy.Inject {
 				cfg.Proxy.Inject[k] = v
 			}
