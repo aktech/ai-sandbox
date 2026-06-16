@@ -12,6 +12,13 @@ import (
 	"strings"
 )
 
+// CopySpec describes one one-way file copy operation.
+// Source is the expanded host path, Dest is the expanded container path.
+type CopySpec struct {
+	Source string
+	Dest   string
+}
+
 // Env holds the environment values the resolver substitutes into mount
 // strings. Values are pre-resolved by the caller — the resolver never
 // reads os.Getenv itself.
@@ -45,6 +52,38 @@ func expandAll(in []string, env Env) []string {
 	out := make([]string, 0, len(in))
 	for _, s := range in {
 		out = append(out, expand(s, env))
+	}
+	return out
+}
+
+// ResolveCopies expands placeholders in copy entries, deduplicates by source
+// path, and filters out missing sources. Each entry follows the same syntax
+// as mount entries: "src" (same path in the container) or "src:dest" (remap).
+func ResolveCopies(copies []string, env Env, log Warner) []CopySpec {
+	expanded := expandAll(copies, env)
+
+	// Dedupe by source path (keep first occurrence).
+	seen := make(map[string]bool, len(expanded))
+	var specs []CopySpec
+	for _, spec := range expanded {
+		src, dst, _ := strings.Cut(spec, ":")
+		if seen[src] {
+			continue
+		}
+		seen[src] = true
+		specs = append(specs, CopySpec{Source: src, Dest: dst})
+	}
+
+	// Filter missing sources.
+	out := make([]CopySpec, 0, len(specs))
+	for _, cp := range specs {
+		if _, err := os.Stat(cp.Source); err != nil {
+			if log != nil {
+				log.Warn("skip missing copy source: " + cp.Source)
+			}
+			continue
+		}
+		out = append(out, cp)
 	}
 	return out
 }

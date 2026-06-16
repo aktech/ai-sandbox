@@ -70,6 +70,48 @@ func TestResolve_ProjectOnlyMounts_NoFallback(t *testing.T) {
 	}
 }
 
+// Copies set on both the default and project level must be merged into
+// Effective.Copies in the same way mounts are.
+func TestResolve_CopiesMerged(t *testing.T) {
+	path := writeCfg(t, `{
+		"default":  {"copies": ["{{HOME}}/.cache/pip"]},
+		"projects": {"/work/foo": {"extra_copies": ["{{HOME}}/.npm"]}}
+	}`)
+	got := Resolve(path, "/work/foo", Effective{Memory: "4g", CPUs: "2"})
+
+	if len(got.Copies) != 2 {
+		t.Fatalf("Copies = %#v, want 2 entries", got.Copies)
+	}
+	if got.Copies[0] != "{{HOME}}/.cache/pip" {
+		t.Errorf("Copies[0] = %q, want %q", got.Copies[0], "{{HOME}}/.cache/pip")
+	}
+	if got.Copies[1] != "{{HOME}}/.npm" {
+		t.Errorf("Copies[1] = %q, want %q", got.Copies[1], "{{HOME}}/.npm")
+	}
+}
+
+// ExtraCopies must be appended to the Copies list after regular copies, in
+// the same way ExtraMounts are appended to Mounts.
+func TestResolve_ExtraCopiesAppended(t *testing.T) {
+	path := writeCfg(t, `{
+		"default": {
+			"copies": ["~/.cache/pip"],
+			"extra_copies": ["~/.npm"]
+		}
+	}`)
+	got := Resolve(path, "/anywhere", Effective{Memory: "4g", CPUs: "2"})
+
+	if len(got.Copies) != 2 {
+		t.Fatalf("Copies = %#v, want 2 entries", got.Copies)
+	}
+	if got.Copies[0] != "~/.cache/pip" {
+		t.Errorf("Copies[0] = %q, want %q", got.Copies[0], "~/.cache/pip")
+	}
+	if got.Copies[1] != "~/.npm" {
+		t.Errorf("Copies[1] = %q, want %q", got.Copies[1], "~/.npm")
+	}
+}
+
 // A project key may be a glob: "**" matches any descendant path so a single
 // rule can route everything under a directory (e.g. all of ~/work).
 func TestResolve_GlobProjectKey_MatchesDescendants(t *testing.T) {

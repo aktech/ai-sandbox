@@ -44,3 +44,25 @@ func TestCreate_PublishesPorts(t *testing.T) {
 		t.Fatalf("-p values = %v, want %v\nfull argv: %v", got, want, r.args)
 	}
 }
+
+// Copy must invoke `docker cp -a` with the correct src and dest arguments.
+func TestCopy_UsesArchiveFlag(t *testing.T) {
+	r := &recorder{}
+	_ = Copy(r, "/host/path", "aisb-x:/container/path")
+
+	if len(r.args) < 3 {
+		t.Fatalf("Copy sent %d args, want at least 3\nfull argv: %v", len(r.args), r.args)
+	}
+	if r.args[0] != "cp" {
+		t.Errorf("arg[0] = %q, want %q", r.args[0], "cp")
+	}
+	if r.args[1] != "-a" {
+		t.Errorf("arg[1] = %q, want %q", r.args[1], "-a")
+	}
+	if r.args[2] != "/host/path" {
+		t.Errorf("arg[2] = %q, want %q", r.args[2], "/host/path")
+	}
+	if r.args[3] != "aisb-x:/container/path" {
+		t.Errorf("arg[3] = %q, want %q", r.args[3], "aisb-x:/container/path")
+	}
+}

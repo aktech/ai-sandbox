@@ -10,6 +10,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -31,42 +32,51 @@ type Logger interface {
 
 // Handler bundles the dependencies every command needs.
 type Handler struct {
-	Log    Logger
-	Docker dx.Executor
+	Log        Logger
+	Docker     dx.Executor
+	WaitCopies bool // wait for copies to complete before entering the shell
 }
 
 // ensure creates the container (or starts it if it already exists) without
 // attaching a shell. extraLabels are added alongside the default aisb.cwd label.
-func (h Handler) ensure(name string, c cfg.Effective, home, cwd string, extraLabels map[string]string) error {
+// It returns whether a new container was created.
+func (h Handler) ensure(name string, c cfg.Effective, home, cwd string, extraLabels map[string]string) (bool, error) {
 	h.Log.Log(fmt.Sprintf("project: %s  container: %s", filepath.Base(cwd), name))
 
 	if !dx.ImageExists(h.Docker, c.Image) {
-		return fmt.Errorf("image %s not found — run `aisb build`", c.Image)
+		return false, fmt.Errorf("image %s not found — run `aisb build`", c.Image)
 	}
 
 	if dx.ContainerExists(h.Docker, name) {
 		if !dx.ContainerRunning(h.Docker, name) {
 			h.Log.Step("starting existing container")
 			if err := dx.Start(h.Docker, name); err != nil {
-				return err
+				return false, err
 			}
 		} else {
 			h.Log.Log("container already running")
 		}
+		return false, nil
 	} else {
 		if err := h.create(name, c, home, cwd, extraLabels); err != nil {
-			return err
+			return false, err
 		}
 		h.Log.OK("container created")
+		return true, nil
 	}
-	return nil
 }
 
 // Up creates (or starts) the container for the project rooted at cwd and
 // replaces the current process with an interactive shell inside it.
 func (h Handler) Up(name string, c cfg.Effective, home, cwd string) error {
-	if err := h.ensure(name, c, home, cwd, nil); err != nil {
+	created, err := h.ensure(name, c, home, cwd, nil)
+	if err != nil {
 		return err
+	}
+	if created && len(c.Copies) > 0 {
+		copies := mountresolver.ResolveCopies(c.Copies,
+			mountresolver.Env{Home: home, CWD: cwd, SharedDir: c.SharedDir}, h.Log)
+		h.doCopies(name, copies)
 	}
 	h.Log.OK("entering shell — run `pi` (or `claude`) inside")
 	return dx.Shell(h.Docker, name)
@@ -75,8 +85,14 @@ func (h Handler) Up(name string, c cfg.Effective, home, cwd string) error {
 // Create prepares the container non-interactively (no shell) and prints its
 // name to stdout, so other tools can layer on top of an aisb sandbox while
 // reusing aisb's mount/image configuration.
+//
+// Copies are intentionally skipped for create (non-interactive).
+// External tools using create may have their own caching strategy,
+// and copies would also force additional startup time, changing the
+// non-interactive contract.
 func (h Handler) Create(name string, c cfg.Effective, home, cwd string, extraLabels map[string]string) error {
-	if err := h.ensure(name, c, home, cwd, extraLabels); err != nil {
+	_, err := h.ensure(name, c, home, cwd, extraLabels)
+	if err != nil {
 		return err
 	}
 	fmt.Println(name)
@@ -166,6 +182,32 @@ func (h Handler) LS() error {
 		}
 	}
 	return nil
+}
+
+// doCopies runs the resolved copy specs. In sync mode (WaitCopies=true) each
+// copy runs sequentially with per-entry logging so the shell only opens after
+// all copies finish. In async mode (default) copies are launched as detached
+// subprocesses and the method returns immediately.
+func (h Handler) doCopies(name string, copies []mountresolver.CopySpec) {
+	if len(copies) == 0 {
+		return
+	}
+	if h.WaitCopies {
+		for _, cp := range copies {
+			dest := name + ":" + cp.Dest
+			h.Log.Step(fmt.Sprintf("copying %s -> %s", cp.Source, dest))
+			if err := dx.Copy(h.Docker, cp.Source, dest); err != nil {
+				h.Log.Warn(fmt.Sprintf("copy failed: %v", err))
+			}
+		}
+	} else {
+		h.Log.Log("warming caches in background...")
+		for _, cp := range copies {
+			dest := name + ":" + cp.Dest
+			cmd := exec.Command("docker", "cp", "-a", cp.Source, dest)
+			_ = cmd.Start() // detached; reparented to init when aisb exec's the shell
+		}
+	}
 }
 
 // create issues `docker run -d` for a fresh container. Internal helper
