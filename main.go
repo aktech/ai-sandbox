@@ -200,7 +200,22 @@ Env vars (override config defaults):
 
 func main() {
 	log := newLogger("aisb")
-	h := cmd.Handler{Log: log, Docker: dx.Cmd{}}
+
+	// Filter out --wait-copies before the subcommand switch so it works
+	// both as "aisb --wait-copies" and "aisb up --wait-copies".
+	waitCopies := false
+	filtered := make([]string, 0, len(os.Args))
+	filtered = append(filtered, os.Args[0])
+	for _, arg := range os.Args[1:] {
+		if arg == "--wait-copies" {
+			waitCopies = true
+		} else {
+			filtered = append(filtered, arg)
+		}
+	}
+	os.Args = filtered
+
+	h := cmd.Handler{Log: log, Docker: dx.Cmd{}, WaitCopies: waitCopies}
 
 	if _, err := exec.LookPath("docker"); err != nil {
 		log.Die("docker not found — install or `colima start`", 1)

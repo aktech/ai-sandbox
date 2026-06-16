@@ -32,6 +32,8 @@ type Project struct {
 	Image       string   `json:"image,omitempty"`
 	Mounts      []string `json:"mounts,omitempty"`       // declarative mount list (replaces defaults)
 	ExtraMounts []string `json:"extra_mounts,omitempty"` // appended after mounts
+	Copies      []string `json:"copies,omitempty"`       // one-way copies (like mounts, but with no back-propagation)
+	ExtraCopies []string `json:"extra_copies,omitempty"` // appended after copies
 	Ports       []string `json:"ports,omitempty"`        // "host:container" port publishes
 }
 
@@ -50,6 +52,7 @@ type Effective struct {
 	SharedDir   string
 	Mounts      []string
 	ExtraMounts []string
+	Copies      []string
 	Ports       []string
 }
 
@@ -80,6 +83,8 @@ func Resolve(path, project string, base Effective) Effective {
 		}
 		cfg.Mounts = append(cfg.Mounts, p.Mounts...)
 		cfg.ExtraMounts = append(cfg.ExtraMounts, p.ExtraMounts...)
+		cfg.Copies = append(cfg.Copies, p.Copies...)
+		cfg.Copies = append(cfg.Copies, p.ExtraCopies...)
 		cfg.Ports = append(cfg.Ports, p.Ports...)
 	}
 	apply(raw.Default)

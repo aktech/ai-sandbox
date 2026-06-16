@@ -202,6 +202,12 @@ func Start(e Executor, name string) error  { return e.RunSilent("start", name) }
 func Stop(e Executor, name string) error   { return e.RunSilent("stop", name) }
 func Remove(e Executor, name string) error { return e.RunSilent("rm", "-f", name) }
 
+// Copy runs `docker cp -a` to copy a file or directory from the host into
+// the container. dest must be of the form "<container-name>:<path>".
+func Copy(e Executor, src, dest string) error {
+	return e.RunSilent("cp", "-a", src, dest)
+}
+
 // PrintStatusTable streams a one-row docker ps table for `name`.
 func PrintStatusTable(e Executor, name string) error {
 	return e.Run("ps", "-a",
