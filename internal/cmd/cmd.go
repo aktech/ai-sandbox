@@ -186,6 +186,7 @@ func (h Handler) create(name string, c cfg.Effective, home, cwd string, extraLab
 		Image:   c.Image,
 		Memory:  c.Memory,
 		CPUs:    c.CPUs,
+		GPUs:    c.GPUs,
 		Workdir: cwd,
 		Labels:  labels,
 		Env: map[string]string{

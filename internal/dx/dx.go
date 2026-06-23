@@ -72,6 +72,7 @@ type ContainerSpec struct {
 	Image    string
 	Memory   string            // "4g"
 	CPUs     string            // "2"
+	GPUs     string            // --gpus value ("all", "device=0,1"); empty omits the flag
 	Workdir  string            // -w
 	Hostname string            // defaults to Name when empty
 	Labels   map[string]string // --label k=v
@@ -175,6 +176,9 @@ func Create(e Executor, s ContainerSpec) error {
 		"--memory", s.Memory,
 		"--cpus", s.CPUs,
 		"--hostname", host,
+	}
+	if s.GPUs != "" {
+		args = append(args, "--gpus", s.GPUs)
 	}
 	for k, v := range s.Labels {
 		args = append(args, "--label", k+"="+v)
