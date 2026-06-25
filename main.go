@@ -183,6 +183,7 @@ Config file (JSON):
     mounts         declarative mount list; each entry is "src" or "src:dest"
     extra_mounts   appended after mounts
     memory / cpus  resource limits
+    gpus           docker --gpus value: "all", "device=0,1", "2" (needs NVIDIA Container Toolkit)
     image          custom image tag
 
   Template vars in mounts: {{HOME}}, {{SHARED_DIR}}, {{CWD}}
@@ -192,6 +193,7 @@ Env vars (override config defaults):
   AISB_IMAGE_NAME   image tag (default: ai-sandbox-pi:latest)
   AISB_MEMORY       memory limit (default: 4g)
   AISB_CPUS         cpu limit (default: 2)
+  AISB_GPUS         expose GPUs, e.g. all (default: none; needs NVIDIA Container Toolkit)
   AISB_SHARED_DIR   host↔container exchange dir (default: ~/sb-shared)
   AISB_CONFIG_FILE  config file path (default: ~/.config/ai-sandbox/config.json)
   HOMELAB_URL       passed through to container
@@ -219,6 +221,7 @@ func main() {
 		Image:     envDefault("AISB_IMAGE_NAME", "ai-sandbox-pi:latest"),
 		Memory:    envDefault("AISB_MEMORY", "4g"),
 		CPUs:      envDefault("AISB_CPUS", "2"),
+		GPUs:      envDefault("AISB_GPUS", ""), // empty = no GPU; "all" or "device=0,1" to expose
 		SharedDir: envDefault("AISB_SHARED_DIR", filepath.Join(home, "sb-shared")),
 	}
 	c := cfg.Resolve(cfgPath(), cwd, base)

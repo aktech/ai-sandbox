@@ -29,6 +29,7 @@ import (
 type Project struct {
 	Memory      string   `json:"memory,omitempty"`
 	CPUs        any      `json:"cpus,omitempty"`
+	GPUs        string   `json:"gpus,omitempty"` // docker --gpus value: "all", "device=0,1", "2"; "" = no GPU
 	Image       string   `json:"image,omitempty"`
 	Mounts      []string `json:"mounts,omitempty"`       // declarative mount list (replaces defaults)
 	ExtraMounts []string `json:"extra_mounts,omitempty"` // appended after mounts
@@ -47,6 +48,7 @@ type Effective struct {
 	Image       string
 	Memory      string
 	CPUs        string
+	GPUs        string
 	SharedDir   string
 	Mounts      []string
 	ExtraMounts []string
@@ -77,6 +79,9 @@ func Resolve(path, project string, base Effective) Effective {
 		}
 		if p.CPUs != nil {
 			cfg.CPUs = fmt.Sprintf("%v", p.CPUs)
+		}
+		if p.GPUs != "" {
+			cfg.GPUs = p.GPUs
 		}
 		cfg.Mounts = append(cfg.Mounts, p.Mounts...)
 		cfg.ExtraMounts = append(cfg.ExtraMounts, p.ExtraMounts...)

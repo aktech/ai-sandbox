@@ -55,6 +55,42 @@ func TestResolve_ExplicitMounts_NoFallback(t *testing.T) {
 	}
 }
 
+// gpus set in the global default block must flow through to Effective so a
+// single config entry exposes GPUs to every project's sandbox.
+func TestResolve_GPUs_DefaultBlock(t *testing.T) {
+	path := writeCfg(t, `{"default": {"gpus": "all"}}`)
+	got := Resolve(path, "/anywhere", Effective{})
+
+	if got.GPUs != "all" {
+		t.Fatalf("GPUs = %q, want %q", got.GPUs, "all")
+	}
+}
+
+// A project-level gpus entry must override the default — same precedence as
+// memory/cpus/image.
+func TestResolve_GPUs_ProjectOverridesDefault(t *testing.T) {
+	path := writeCfg(t, `{
+		"default":  {"gpus": "all"},
+		"projects": {"/work/foo": {"gpus": "device=0"}}
+	}`)
+	got := Resolve(path, "/work/foo", Effective{})
+
+	if got.GPUs != "device=0" {
+		t.Fatalf("GPUs = %q, want %q", got.GPUs, "device=0")
+	}
+}
+
+// An empty/absent gpus must leave the base value untouched (so AISB_GPUS or the
+// no-GPU default survives a config that doesn't mention gpus).
+func TestResolve_GPUs_AbsentKeepsBase(t *testing.T) {
+	path := writeCfg(t, `{"default": {"memory": "8g"}}`)
+	got := Resolve(path, "/anywhere", Effective{GPUs: "all"})
+
+	if got.GPUs != "all" {
+		t.Fatalf("GPUs = %q, want %q (base must survive)", got.GPUs, "all")
+	}
+}
+
 // Project-keyed mounts count too — fallback must not fire when only the
 // project entry supplies mounts.
 func TestResolve_ProjectOnlyMounts_NoFallback(t *testing.T) {

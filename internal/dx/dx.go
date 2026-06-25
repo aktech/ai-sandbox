@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -72,6 +73,7 @@ type ContainerSpec struct {
 	Image    string
 	Memory   string            // "4g"
 	CPUs     string            // "2"
+	GPUs     string            // --gpus value ("all", "device=0,1"); empty omits the flag
 	Workdir  string            // -w
 	Hostname string            // defaults to Name when empty
 	Labels   map[string]string // --label k=v
@@ -88,6 +90,7 @@ type Info struct {
 	NanoCpus  string // raw int64 string from HostConfig.NanoCpus
 	Memory    string // raw int64 string from HostConfig.Memory (bytes)
 	CWDLabel  string // aisb.cwd label, "" if absent
+	GPUs      string // compacted --gpus request: "all", "2", "0,1", or "-" when none
 }
 
 func ContainerExists(e Executor, name string) bool {
@@ -131,8 +134,8 @@ func ListNames(e Executor, namePrefix string) ([]string, error) {
 	return strings.Fields(out), nil
 }
 
-// Inspect fetches state, started-at, cpu/mem limits, and the aisb.cwd
-// label for each named container.
+// Inspect fetches state, started-at, cpu/mem limits, the aisb.cwd label, and
+// the GPU request for each named container.
 func Inspect(e Executor, names ...string) ([]Info, error) {
 	if len(names) == 0 {
 		return nil, nil
@@ -140,15 +143,16 @@ func Inspect(e Executor, names ...string) ([]Info, error) {
 	args := append([]string{"inspect", "--format",
 		`{{.Name}}` + "\t" + `{{.State.Status}}` + "\t" + `{{.State.StartedAt}}` + "\t" +
 			`{{.HostConfig.NanoCpus}}` + "\t" + `{{.HostConfig.Memory}}` + "\t" +
-			`{{index .Config.Labels "aisb.cwd"}}`}, names...)
+			`{{index .Config.Labels "aisb.cwd"}}` + "\t" +
+			`{{range .HostConfig.DeviceRequests}}{{.Count}}:{{range .DeviceIDs}}{{.}},{{end}} {{end}}`}, names...)
 	out, err := e.Output(args...)
 	if err != nil {
 		return nil, err
 	}
 	var infos []Info
 	for _, line := range strings.Split(out, "\n") {
-		f := strings.SplitN(line, "\t", 6)
-		if len(f) < 6 {
+		f := strings.SplitN(line, "\t", 7)
+		if len(f) < 7 {
 			continue
 		}
 		t, _ := time.Parse(time.RFC3339Nano, f[2])
@@ -159,6 +163,7 @@ func Inspect(e Executor, names ...string) ([]Info, error) {
 			NanoCpus:  f[3],
 			Memory:    f[4],
 			CWDLabel:  f[5],
+			GPUs:      CompactGPUs(f[6]),
 		})
 	}
 	return infos, nil
@@ -175,6 +180,17 @@ func Create(e Executor, s ContainerSpec) error {
 		"--memory", s.Memory,
 		"--cpus", s.CPUs,
 		"--hostname", host,
+	}
+	if s.GPUs != "" {
+		args = append(args, "--gpus", s.GPUs)
+		// Pass the NVIDIA device nodes explicitly so Docker records them in the
+		// container's systemd scope (DeviceAllow=). Without this, the nvidia
+		// runtime hook whitelists them out-of-band and any `systemctl
+		// daemon-reload` silently revokes GPU access — NVML "Unknown Error"
+		// though the device nodes remain visible. See nvidia-container-toolkit#48.
+		for _, dev := range nvidiaDevices() {
+			args = append(args, "--device", dev)
+		}
 	}
 	for k, v := range s.Labels {
 		args = append(args, "--label", k+"="+v)
@@ -196,6 +212,21 @@ func Create(e Executor, s ContainerSpec) error {
 	}
 	args = append(args, s.Image)
 	return e.Run(args...)
+}
+
+// nvidiaDevices returns host NVIDIA character device nodes (nvidia0..N,
+// nvidiactl, nvidia-uvm, nvidia-uvm-tools, nvidia-modeset). Skips the
+// nvidia-caps directory, which is not a device node. Enumerated on the host
+// where aisb runs, which must be the same host as the Docker daemon.
+func nvidiaDevices() []string {
+	matches, _ := filepath.Glob("/dev/nvidia*")
+	var devs []string
+	for _, m := range matches {
+		if fi, err := os.Stat(m); err == nil && !fi.IsDir() {
+			devs = append(devs, m)
+		}
+	}
+	return devs
 }
 
 func Start(e Executor, name string) error  { return e.RunSilent("start", name) }
@@ -268,5 +299,28 @@ func CompactMem(s string) string {
 		return fmt.Sprintf("%gM", float64(b)/float64(k*k))
 	default:
 		return fmt.Sprintf("%dK", b/k)
+	}
+}
+
+// CompactGPUs renders a container's GPU request from the Inspect template's
+// per-request "count:id,id," tokens (docker's HostConfig.DeviceRequests): "all"
+// for `--gpus all` (count -1), the device IDs for `--gpus device=0,1`, a plain
+// count for `--gpus 2`, or "-" when the container requested no GPU.
+func CompactGPUs(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "-"
+	}
+	count, ids, _ := strings.Cut(strings.Fields(s)[0], ":")
+	ids = strings.Trim(ids, ",")
+	switch {
+	case ids != "":
+		return ids
+	case count == "-1":
+		return "all"
+	case count != "" && count != "0":
+		return count
+	default:
+		return "-"
 	}
 }

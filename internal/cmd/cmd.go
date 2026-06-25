@@ -133,12 +133,12 @@ func (h Handler) LS() error {
 	if err != nil {
 		return err
 	}
-	rows := [][5]string{{"name", "uptime", "cpus", "mem", "cwd"}}
+	rows := [][6]string{{"name", "uptime", "cpus", "mem", "gpus", "cwd"}}
 	for _, i := range infos {
-		rows = append(rows, [5]string{i.Name, dx.CompactUptime(i.Status, i.StartedAt),
-			dx.CompactCPUs(i.NanoCpus), dx.CompactMem(i.Memory), i.CWDLabel})
+		rows = append(rows, [6]string{i.Name, dx.CompactUptime(i.Status, i.StartedAt),
+			dx.CompactCPUs(i.NanoCpus), dx.CompactMem(i.Memory), i.GPUs, i.CWDLabel})
 	}
-	w := [5]int{}
+	w := [6]int{}
 	for _, r := range rows {
 		for i, c := range r {
 			if n := len(c); n > w[i] {
@@ -152,17 +152,18 @@ func (h Handler) LS() error {
 		c1 := pad(r[1], w[1])
 		c2 := pad(r[2], w[2])
 		c3 := pad(r[3], w[3])
-		c4 := r[4]
+		c4 := pad(r[4], w[4])
+		c5 := r[5]
 		if i == 0 {
-			fmt.Printf("\033[1;36m%s\033[0m  \033[1;36m%s\033[0m  \033[1;36m%s\033[0m  \033[1;36m%s\033[0m  \033[1;36m%s\033[0m\n",
-				c0, c1, c2, c3, c4)
+			fmt.Printf("\033[1;36m%s\033[0m  \033[1;36m%s\033[0m  \033[1;36m%s\033[0m  \033[1;36m%s\033[0m  \033[1;36m%s\033[0m  \033[1;36m%s\033[0m\n",
+				c0, c1, c2, c3, c4, c5)
 		} else {
 			st := fmt.Sprintf("\033[2m%s\033[0m", c1)
 			if last := r[1][len(r[1])-1]; last == 's' || last == 'm' || last == 'h' || last == 'd' {
 				st = fmt.Sprintf("\033[32m%s\033[0m", c1)
 			}
-			fmt.Printf("\033[35m%s\033[0m  %s  \033[33m%s\033[0m  \033[33m%s\033[0m  \033[34m%s\033[0m\n",
-				c0, st, c2, c3, c4)
+			fmt.Printf("\033[35m%s\033[0m  %s  \033[33m%s\033[0m  \033[33m%s\033[0m  \033[33m%s\033[0m  \033[34m%s\033[0m\n",
+				c0, st, c2, c3, c4, c5)
 		}
 	}
 	return nil
@@ -186,6 +187,7 @@ func (h Handler) create(name string, c cfg.Effective, home, cwd string, extraLab
 		Image:   c.Image,
 		Memory:  c.Memory,
 		CPUs:    c.CPUs,
+		GPUs:    c.GPUs,
 		Workdir: cwd,
 		Labels:  labels,
 		Env: map[string]string{
