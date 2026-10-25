@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -25,6 +27,14 @@ func configDir() string {
 	return filepath.Join(os.Getenv("HOME"), ".config", "ai-sandbox")
 }
 
+// configFilePath is the config file in use (AISB_CONFIG_FILE or the default).
+func configFilePath() string {
+	if p := os.Getenv("AISB_CONFIG_FILE"); p != "" {
+		return p
+	}
+	return filepath.Join(configDir(), "config.json")
+}
+
 func secretsPath() string { return filepath.Join(configDir(), "secrets.enc") }
 func caCertPath() string  { return filepath.Join(configDir(), "ca.crt") }
 func caKeyPath() string   { return filepath.Join(configDir(), "ca.key") }
@@ -37,6 +47,51 @@ func masterPassword(prompt string) ([]byte, error) {
 		return []byte(v), nil
 	}
 	return readPasswordMasked(int(os.Stdin.Fd()), prompt)
+}
+
+// unlockSecrets asks for the master password (prompt) and decrypts the secret
+// store, turning failures into errors that say which file and what to do.
+func unlockSecrets(prompt string) (pw []byte, secrets map[string]string, err error) {
+	path := secretsPath()
+	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+		return nil, nil, fmt.Errorf("no secret store at %s: run `aisb proxy init` to create one", path)
+	}
+	pw, err = masterPassword(prompt)
+	if err != nil {
+		return nil, nil, err
+	}
+	secrets, err = secret.Load(path, pw)
+	if errors.Is(err, secret.ErrDecrypt) {
+		return nil, nil, fmt.Errorf("wrong master password for %s (or the file is corrupt). "+
+			"If you have lost the password, delete %s, %s and %s, then run `aisb proxy init` "+
+			"and `aisb secret set` again", path, path, caCertPath(), caKeyPath())
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	return pw, secrets, nil
+}
+
+// explainProxyUnlock tells the user why `aisb` is about to ask for the master
+// password: what proxy mode is, why it is on, and how to skip or disable it.
+func (h Handler) explainProxyUnlock() {
+	if os.Getenv("AISB_MASTER_PASSWORD") != "" {
+		h.Log.Step("starting the credential proxy (secret store unlocked with AISB_MASTER_PASSWORD)")
+		return
+	}
+	h.Log.Step("proxy mode is on: your config has a \"proxy\" block")
+	h.Log.Log("  The sandbox reaches the internet only through the aisb credential proxy,")
+	h.Log.Log("  which adds your real API keys to requests so the sandbox never sees them.")
+	h.Log.Log("  The proxy is not running. To start it, aisb needs your saved keys from")
+	h.Log.Log("  " + secretsPath())
+	h.Log.Log("  Enter the master password you chose when you ran `aisb proxy init`.")
+	h.Log.Log("  Tip: set AISB_MASTER_PASSWORD to skip this prompt, or remove the \"proxy\"")
+	h.Log.Log("  block from " + configFilePath() + " to turn proxy mode off.")
+}
+
+// unlockPrompt is the master-password prompt, naming the file it unlocks.
+func unlockPrompt() string {
+	return fmt.Sprintf("master password for %s: ", secretsPath())
 }
 
 // secretsPayload builds the JSON delivered to the proxy once at start: CA
@@ -62,11 +117,7 @@ func (h Handler) proxyPayload(c cfg.Effective) (payload []byte, caHostPath strin
 	if err != nil {
 		return nil, "", fmt.Errorf("read CA key (run `aisb proxy init`): %w", err)
 	}
-	pw, err := masterPassword("master password: ")
-	if err != nil {
-		return nil, "", err
-	}
-	secrets, err := secret.Load(secretsPath(), pw)
+	_, secrets, err := unlockSecrets(unlockPrompt())
 	if err != nil {
 		return nil, "", err
 	}
@@ -87,6 +138,12 @@ func (h Handler) ProxyInit() error {
 	if _, err := os.Stat(caCertPath()); err == nil {
 		return fmt.Errorf("CA already exists at %s; remove it to regenerate", caCertPath())
 	}
+	// Ask for the password before writing anything, so a cancelled or
+	// mistyped entry leaves nothing behind that blocks the next init.
+	pw, err := newMasterPassword()
+	if err != nil {
+		return err
+	}
 	certPEM, keyPEM, err := ca.Generate("aisb proxy CA")
 	if err != nil {
 		return err
@@ -97,10 +154,6 @@ func (h Handler) ProxyInit() error {
 	if err := os.WriteFile(caKeyPath(), keyPEM, 0o600); err != nil {
 		return err
 	}
-	pw, err := masterPassword("set master password: ")
-	if err != nil {
-		return err
-	}
 	if err := secret.Save(secretsPath(), pw, map[string]string{}); err != nil {
 		return err
 	}
@@ -108,16 +161,37 @@ func (h Handler) ProxyInit() error {
 	return nil
 }
 
+// newMasterPassword asks for a new master password twice (or takes
+// AISB_MASTER_PASSWORD) and rejects an empty or mismatched entry.
+func newMasterPassword() ([]byte, error) {
+	if v := os.Getenv("AISB_MASTER_PASSWORD"); v != "" {
+		return []byte(v), nil
+	}
+	fmt.Fprintln(os.Stderr, "Choose a master password for the new secret store "+secretsPath()+".")
+	fmt.Fprintln(os.Stderr, "You will need it whenever the proxy starts or you change secrets. It cannot be recovered.")
+	pw, err := readPasswordMasked(int(os.Stdin.Fd()), "new master password: ")
+	if err != nil {
+		return nil, err
+	}
+	if len(pw) == 0 {
+		return nil, fmt.Errorf("master password cannot be empty; nothing was created")
+	}
+	again, err := readPasswordMasked(int(os.Stdin.Fd()), "repeat master password: ")
+	if err != nil {
+		return nil, err
+	}
+	if string(pw) != string(again) {
+		return nil, fmt.Errorf("passwords did not match; nothing was created, run `aisb proxy init` again")
+	}
+	return pw, nil
+}
+
 // SecretSet stores a value for name. The value is read from stdin when piped
 // (e.g. `grep ... | aisb secret set github`) or prompted without echo at a
 // terminal. It is never passed as an argument, so it cannot leak via shell
 // history or the process table.
 func (h Handler) SecretSet(name string) error {
-	pw, err := masterPassword("master password: ")
-	if err != nil {
-		return err
-	}
-	secrets, err := secret.Load(secretsPath(), pw)
+	pw, secrets, err := unlockSecrets(unlockPrompt())
 	if err != nil {
 		return err
 	}
@@ -149,11 +223,7 @@ func readSecretValue(name string) (string, error) {
 
 // SecretRM deletes a secret by name.
 func (h Handler) SecretRM(name string) error {
-	pw, err := masterPassword("master password: ")
-	if err != nil {
-		return err
-	}
-	secrets, err := secret.Load(secretsPath(), pw)
+	pw, secrets, err := unlockSecrets(unlockPrompt())
 	if err != nil {
 		return err
 	}
@@ -167,11 +237,7 @@ func (h Handler) SecretRM(name string) error {
 
 // SecretLS prints stored secret names (never values).
 func (h Handler) SecretLS() error {
-	pw, err := masterPassword("master password: ")
-	if err != nil {
-		return err
-	}
-	secrets, err := secret.Load(secretsPath(), pw)
+	_, secrets, err := unlockSecrets(unlockPrompt())
 	if err != nil {
 		return err
 	}

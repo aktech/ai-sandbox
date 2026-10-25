@@ -141,6 +141,22 @@ func networkExists(e dx.Executor, net string) bool {
 	return false
 }
 
+// checkProxyImage confirms the proxy image exists and runs /aisb-proxy (images
+// built before the psb → aisb rename run /psb-proxy and cannot take the
+// payload). It runs before the master password prompt so a fixable setup
+// problem is reported first.
+func checkProxyImage(e dx.Executor, image string) error {
+	out, err := e.Output("image", "inspect", "--format", "{{json .Config.Entrypoint}}", image)
+	if err != nil {
+		return fmt.Errorf("proxy image %s not found: build it from the ai-sandbox repo with `make proxy-image`", image)
+	}
+	if !strings.Contains(out, `"/aisb-proxy"`) {
+		return fmt.Errorf("proxy image %s is out of date (built before the psb → aisb rename): "+
+			"rebuild it from the ai-sandbox repo with `make proxy-image`", image)
+	}
+	return nil
+}
+
 // ensureProxyRunning starts the proxy container if not already up and delivers
 // the payload to it. If a stale proxy exists it is removed and recreated so the
 // fresh payload (CA + secrets + config) takes effect. payload is built by the

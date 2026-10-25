@@ -7,6 +7,7 @@ package secret
 import (
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 
@@ -27,6 +28,10 @@ func deriveKey(pw, salt []byte) [32]byte {
 	copy(key[:], k)
 	return key
 }
+
+// ErrDecrypt is returned by Load when the password is wrong or the file was
+// tampered with; the two are indistinguishable by design.
+var ErrDecrypt = errors.New("decrypt failed (wrong password or corrupt file)")
 
 // Save encrypts secrets under pw and writes them to path with 0600 perms.
 func Save(path string, pw []byte, secrets map[string]string) error {
@@ -70,7 +75,7 @@ func Load(path string, pw []byte) (map[string]string, error) {
 	key := deriveKey(pw, env.Salt)
 	plain, ok := secretbox.Open(nil, env.Ciphertext, &nonce, &key)
 	if !ok {
-		return nil, fmt.Errorf("decrypt failed (wrong password or corrupt file)")
+		return nil, ErrDecrypt
 	}
 	var secrets map[string]string
 	if err := json.Unmarshal(plain, &secrets); err != nil {

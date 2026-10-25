@@ -61,6 +61,10 @@ func (h Handler) ensure(name string, c cfg.Effective, home, cwd string, extraLab
 	if c.Proxy != nil {
 		h.caHostPath = caCertPath()
 		if !dx.ContainerRunning(h.Docker, proxyContainer) {
+			if err := checkProxyImage(h.Docker, proxyImage()); err != nil {
+				return false, err
+			}
+			h.explainProxyUnlock()
 			payload, _, err := h.proxyPayload(c)
 			if err != nil {
 				return false, err
