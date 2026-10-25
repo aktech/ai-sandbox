@@ -318,7 +318,7 @@
     border-radius: 20px;
     overflow: hidden;
     display: grid; place-items: center;
-    padding: 96px 48px 104px;
+    padding: 96px 48px;
     isolation: isolate;
     background: linear-gradient(170deg, #1e3b44 0%, #4f6b6a 22%, #c99a69 52%, #e5a062 66%, #bd6a3f 84%, #6f3e2a 100%);
   }
@@ -366,9 +366,8 @@
   .session .ok { color: var(--t-ok); }
   .session .gap { display: block; height: 10px; }
   .caption {
-    position: absolute; left: 28px; right: 28px; bottom: 24px;
-    font-size: 14px; color: rgba(255,255,255,.78); font-weight: 400;
-    display: flex; justify-content: space-between; gap: 16px;
+    margin: 16px 4px 0;
+    font-size: 15px; color: var(--fg-2); font-weight: 400;
   }
 
   /* ---------- responsive ---------- */
@@ -379,7 +378,6 @@
     .hero { padding: 80px 0 48px; }
     .band { margin-bottom: 80px; }
     .panel { padding: 20px 16px; border-radius: 16px; }
-    .caption { position: static; margin-top: 16px; width: 100%; }
   }
   @media (max-width: 560px) {
     body { font-size: 17.5px; }
@@ -433,8 +431,8 @@
           <div class="window-bar"><i></i><i></i><i></i><span>~/dev/my-project</span></div>
 <pre class="session" id="session" aria-label="Example aisb session"><div class="ghost" aria-hidden="true"><span class="l"><span class="ps">$</span> <span class="in">aisb</span></span><span class="l"><span class="tag">[aisb]</span> project: my-project  container: aisb-my-project</span><span class="l"><span class="tag">[aisb]</span> → creating container aisb-my-project (image=ai-sandbox-pi:latest, mem=4g, cpus=2)</span><span class="l"><span class="tag">[aisb]</span> <span class="ok">container created</span></span><span class="gap"></span><span class="l"><span class="ps">aisb-my-project $</span> <span class="in">claude</span></span></div><div class="live"></div></pre>
         </div>
-        <div class="caption"><span>First run creates the container. Every run after re-enters it.</span></div>
       </div>
+      <p class="caption">First run creates the container. Every run after re-enters it.</p>
     </div>
 
     <div class="rest col">
