@@ -320,7 +320,7 @@ func main() {
 		if len(os.Args) != 5 {
 			log.Die("usage: aisb __copy <container> <src> <dest>", 2)
 		}
-		dieOn(h.CopyOne(os.Args[2], os.Args[3], os.Args[4]))
+		dieOn(dx.Copy(h.Docker, os.Args[2], os.Args[3], os.Args[4]))
 	case "-h", "--help", "help":
 		usage()
 	default:

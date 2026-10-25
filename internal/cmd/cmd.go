@@ -188,7 +188,8 @@ func (h Handler) LS() error {
 // doCopies runs the resolved copy specs. In sync mode (WaitCopies=true) each
 // copy runs sequentially with per-entry logging so the shell only opens after
 // all copies finish. In async mode (default) each copy runs in a background
-// `aisb __copy` process (see CopyOne) and the method returns immediately.
+// `aisb __copy` process, which calls the same dx.Copy, and the method returns
+// immediately.
 func (h Handler) doCopies(name string, copies []mountresolver.CopySpec) {
 	if len(copies) == 0 {
 		return
@@ -196,7 +197,7 @@ func (h Handler) doCopies(name string, copies []mountresolver.CopySpec) {
 	if h.WaitCopies {
 		for _, cp := range copies {
 			h.Log.Step(fmt.Sprintf("copying %s -> %s:%s", cp.Source, name, cp.Dest))
-			if err := h.CopyOne(name, cp.Source, cp.Dest); err != nil {
+			if err := dx.Copy(h.Docker, name, cp.Source, cp.Dest); err != nil {
 				h.Log.Warn(fmt.Sprintf("copy failed: %v", err))
 			}
 		}
@@ -213,13 +214,6 @@ func (h Handler) doCopies(name string, copies []mountresolver.CopySpec) {
 			_ = exec.Command(self, "__copy", name, cp.Source, cp.Dest).Start()
 		}
 	}
-}
-
-// CopyOne copies one host path to dest inside container name. It backs both
-// the --wait-copies path and the hidden `aisb __copy` subcommand that async
-// mode runs in the background, so both modes copy the same way.
-func (h Handler) CopyOne(name, src, dest string) error {
-	return dx.Copy(h.Docker, name, src, dest)
 }
 
 // create issues `docker run -d` for a fresh container. Internal helper
