@@ -182,7 +182,7 @@ func Create(e Executor, s ContainerSpec) error {
 		"--hostname", host,
 	}
 	if s.GPUs != "" {
-		args = append(args, "--gpus", s.GPUs)
+		args = append(args, "--gpus", gpusFlag(s.GPUs))
 		// Pass the NVIDIA device nodes explicitly so Docker records them in the
 		// container's systemd scope (DeviceAllow=). Without this, the nvidia
 		// runtime hook whitelists them out-of-band and any `systemctl
@@ -212,6 +212,16 @@ func Create(e Executor, s ContainerSpec) error {
 	}
 	args = append(args, s.Image)
 	return e.Run(args...)
+}
+
+// gpusFlag quotes a "device=" list so docker's CSV parser keeps it as one
+// field: unquoted, "device=0,1" means device 0 plus a count of 1. Values that
+// set other keys too (a second "=") are passed through for the user to quote.
+func gpusFlag(v string) string {
+	if strings.HasPrefix(v, "device=") && strings.Contains(v, ",") && strings.Count(v, "=") == 1 {
+		return `"` + v + `"`
+	}
+	return v
 }
 
 // nvidiaDevices returns host NVIDIA character device nodes (nvidia0..N,

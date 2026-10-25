@@ -45,6 +45,28 @@ func TestCreate_PublishesPorts(t *testing.T) {
 	}
 }
 
+// docker parses --gpus as CSV, so an unquoted "device=0,1" reads as device 0
+// plus a count of 1. Create must quote a device list so docker sees one field.
+func TestCreate_QuotesGPUDeviceList(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"device=0,1", `"device=0,1"`},
+		{`"device=0,1"`, `"device=0,1"`}, // already quoted: leave alone
+		{"device=0", "device=0"},
+		{"device=0,capabilities=compute", "device=0,capabilities=compute"}, // separate keys: not a list
+		{"all", "all"},
+		{"2", "2"},
+	}
+	for _, c := range cases {
+		r := &recorder{}
+		if err := Create(r, ContainerSpec{Name: "aisb-x", Image: "img", Memory: "4g", CPUs: "2", GPUs: c.in}); err != nil {
+			t.Fatal(err)
+		}
+		if got := argPairs(r.args, "--gpus"); len(got) != 1 || got[0] != c.want {
+			t.Errorf("GPUs %q: --gpus = %v, want [%s]", c.in, got, c.want)
+		}
+	}
+}
+
 // Copy must invoke `docker cp -a` with the correct src and dest arguments.
 func TestCopy_UsesArchiveFlag(t *testing.T) {
 	r := &recorder{}
