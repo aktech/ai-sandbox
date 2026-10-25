@@ -1,6 +1,6 @@
 FROM debian:bookworm-slim
 
-ARG PI_VERSION=latest
+ARG PI_VERSION=v0.79.1
 ARG MISE_VERSION=v2026.5.3
 ARG OMZ_SHA=e64912e0c1eaa32181c3b5e5e4bf8042ecd0e8a7
 ARG TARGETARCH
@@ -61,7 +61,13 @@ k9s     = "0.50.18"
 "ubi:googleworkspace/cli" = { version = "0.22.5", exe = "gws", matching = "musl" }
 TOML
 
-RUN set -e \
+# Optional github_token secret raises the GitHub API rate limit for mise's
+# attestation checks and ubi release lookups; anonymous builds 403 on busy IPs.
+# Secret mounts never persist into image layers, unlike build args.
+RUN --mount=type=secret,id=github_token set -e \
+ && if [ -s /run/secrets/github_token ]; then \
+      export GITHUB_TOKEN="$(cat /run/secrets/github_token)"; \
+    fi \
  && mise install \
  && mise reshim \
  && rm -rf "$MISE_CACHE_DIR"/* /tmp/* \
@@ -86,7 +92,7 @@ RUN set -e \
       amd64) ARCH=x64 ;; \
       *) echo "unsupported arch: $TARGETARCH"; exit 1 ;; \
     esac \
- && URL="https://github.com/badlogic/pi-mono/releases/${PI_VERSION}/download/pi-linux-${ARCH}.tar.gz" \
+ && URL="https://github.com/badlogic/pi-mono/releases/download/${PI_VERSION}/pi-linux-${ARCH}.tar.gz" \
  && [ "$PI_VERSION" = "latest" ] && URL="https://github.com/badlogic/pi-mono/releases/latest/download/pi-linux-${ARCH}.tar.gz" || true \
  && curl -fsSL -o /tmp/pi.tgz "$URL" \
  && mkdir -p /opt \

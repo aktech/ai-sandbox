@@ -14,6 +14,10 @@ func (r *recorder) Output(args ...string) (string, error) { return "", nil }
 func (r *recorder) Run(args ...string) error              { r.args = args; return nil }
 func (r *recorder) RunSilent(args ...string) error        { r.args = args; return nil }
 func (r *recorder) Replace(args ...string) error          { r.args = args; return nil }
+func (r *recorder) RunWithStdin(stdin []byte, args ...string) error {
+	r.args = args
+	return nil
+}
 
 // argPairs returns the values that follow each occurrence of flag in argv.
 func argPairs(argv []string, flag string) []string {
@@ -24,6 +28,27 @@ func argPairs(argv []string, flag string) []string {
 		}
 	}
 	return vals
+}
+
+// Create must attach the container to a named network via `--network` when
+// ContainerSpec.Network is set (used by proxy mode's internal networks), and
+// must omit the flag entirely when empty (default bridge, today's behavior).
+func TestCreate_NetworkFlag(t *testing.T) {
+	r := &recorder{}
+	if err := Create(r, ContainerSpec{Name: "aisb-x", Image: "img", Memory: "4g", CPUs: "2", Network: "aisb-net-x"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := argPairs(r.args, "--network"); len(got) != 1 || got[0] != "aisb-net-x" {
+		t.Fatalf("--network = %v, want [aisb-net-x]\nargv: %v", got, r.args)
+	}
+
+	r2 := &recorder{}
+	if err := Create(r2, ContainerSpec{Name: "aisb-y", Image: "img", Memory: "4g", CPUs: "2"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := argPairs(r2.args, "--network"); len(got) != 0 {
+		t.Fatalf("--network should be absent without Network set, got %v", got)
+	}
 }
 
 // Create must publish each requested port via a `-p host:container` flag so a
@@ -76,6 +101,10 @@ func (c *callLog) Output(args ...string) (string, error) { return "", nil }
 func (c *callLog) Run(args ...string) error              { c.calls = append(c.calls, args); return nil }
 func (c *callLog) RunSilent(args ...string) error        { c.calls = append(c.calls, args); return nil }
 func (c *callLog) Replace(args ...string) error          { c.calls = append(c.calls, args); return nil }
+func (c *callLog) RunWithStdin(_ []byte, args ...string) error {
+	c.calls = append(c.calls, args)
+	return nil
+}
 
 func joinCalls(calls [][]string) string {
 	var lines []string
@@ -123,10 +152,11 @@ func TestCopy_FileLandsAtDest(t *testing.T) {
 // the parsing in Inspect.
 type outputStub struct{ out string }
 
-func (o outputStub) Output(...string) (string, error) { return o.out, nil }
-func (o outputStub) Run(...string) error              { return nil }
-func (o outputStub) RunSilent(...string) error        { return nil }
-func (o outputStub) Replace(...string) error          { return nil }
+func (o outputStub) Output(...string) (string, error)     { return o.out, nil }
+func (o outputStub) Run(...string) error                  { return nil }
+func (o outputStub) RunSilent(...string) error            { return nil }
+func (o outputStub) Replace(...string) error              { return nil }
+func (o outputStub) RunWithStdin([]byte, ...string) error { return nil }
 
 // CompactGPUs maps docker's DeviceRequests encoding to a compact column value:
 // count -1 → "all", explicit device IDs verbatim, a positive count as-is, and
