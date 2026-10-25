@@ -494,7 +494,7 @@
 
       <section id="install">
         <p class="label">Install</p>
-        <p>You need Docker running and Go to build the CLI. On macOS, <a href="https://github.com/abiosoft/colima" rel="noopener">colima</a> works well. Building the image takes about five minutes, once.</p>
+        <p>You need Docker running, nothing else: no clone, no Go. On macOS, <a href="https://github.com/abiosoft/colima" rel="noopener">colima</a> works well. Building the image takes about five minutes, once.</p>
         <div class="code">
           <div class="code-head"><span>Terminal</span>
             <button class="copy" data-copy="install" aria-label="Copy install commands">
@@ -502,11 +502,15 @@
               <svg class="done" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
             </button>
           </div>
-<pre id="install-code" data-lang="sh"># build the CLI and put it on your PATH
-git clone https://github.com/aktech/ai-sandbox
-cd ai-sandbox
-make build
-cp bin/aisb ~/.local/bin/
+<pre id="install-code" data-lang="sh"># download the CLI for your machine, verify it, put it on your PATH
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+ARCH=$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
+F=aisb-$OS-$ARCH
+curl -fsSLO "https://github.com/aktech/ai-sandbox/releases/latest/download/$F.tar.gz"
+curl -fsSLO "https://github.com/aktech/ai-sandbox/releases/latest/download/$F.tar.gz.sha256"
+shasum -a 256 -c "$F.tar.gz.sha256"
+tar -xzf "$F.tar.gz"
+mkdir -p ~/.local/bin &amp;&amp; install -m 0755 "$F" ~/.local/bin/aisb
 
 # build the image (one time)
 aisb build
