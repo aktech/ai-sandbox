@@ -183,12 +183,13 @@ func Create(e Executor, s ContainerSpec) error {
 	}
 	if s.GPUs != "" {
 		args = append(args, "--gpus", gpusFlag(s.GPUs))
-		// Pass the NVIDIA device nodes explicitly so Docker records them in the
-		// container's systemd scope (DeviceAllow=). Without this, the nvidia
+		// Pass the requested GPUs' device nodes explicitly so Docker records them
+		// in the container's systemd scope (DeviceAllow=). Without this, the nvidia
 		// runtime hook whitelists them out-of-band and any `systemctl
 		// daemon-reload` silently revokes GPU access — NVML "Unknown Error"
 		// though the device nodes remain visible. See nvidia-container-toolkit#48.
-		for _, dev := range nvidiaDevices() {
+		// Only the requested GPUs' nodes are passed, so pinning stays pinned.
+		for _, dev := range gpuDevices(s.GPUs, hostGPUs) {
 			args = append(args, "--device", dev)
 		}
 	}
@@ -224,12 +225,110 @@ func gpusFlag(v string) string {
 	return v
 }
 
-// nvidiaDevices returns host NVIDIA character device nodes (nvidia0..N,
-// nvidiactl, nvidia-uvm, nvidia-uvm-tools, nvidia-modeset). Skips the
-// nvidia-caps directory, which is not a device node. Enumerated on the host
-// where aisb runs, which must be the same host as the Docker daemon.
-func nvidiaDevices() []string {
-	matches, _ := filepath.Glob("/dev/nvidia*")
+// gpuHost is where gpuDevices looks up the host's GPUs. Fields are swappable
+// so tests can fake a GPU host.
+type gpuHost struct {
+	dev           string                 // device node dir, "/dev"
+	procGPUs      string                 // per-GPU driver info, "/proc/driver/nvidia/gpus"
+	smiIndexUUIDs func() (string, error) // "index, uuid" lines from nvidia-smi
+}
+
+// hostGPUs is the real host. It is read on the machine aisb runs on, which
+// must be the Docker daemon's host for the device paths to mean anything.
+var hostGPUs = gpuHost{
+	dev:      "/dev",
+	procGPUs: "/proc/driver/nvidia/gpus",
+	smiIndexUUIDs: func() (string, error) {
+		out, err := exec.Command("nvidia-smi", "--query-gpu=index,uuid", "--format=csv,noheader").Output()
+		return string(out), err
+	},
+}
+
+// nvidiaControlNodes are shared by every GPU and needed whichever GPU is used.
+var nvidiaControlNodes = []string{"nvidiactl", "nvidia-uvm", "nvidia-uvm-tools", "nvidia-modeset"}
+
+// gpuDevices returns the host device nodes backing a --gpus request: the
+// requested GPUs' own nodes plus the shared control nodes. GPU indexes are
+// NVML's numbering, which need not match /dev/nvidiaN, so each index is
+// resolved to its UUID (nvidia-smi) and the UUID to its device minor (/proc).
+func gpuDevices(gpus string, h gpuHost) []string {
+	if gpus == "all" {
+		return allNvidiaNodes(h.dev)
+	}
+	ids, ok := strings.CutPrefix(strings.Trim(gpus, `"`), "device=")
+	if !ok {
+		return nil
+	}
+	smi, err := h.smiIndexUUIDs()
+	if err != nil {
+		return nil
+	}
+	uuidByIndex := parseSMIIndexUUIDs(smi)
+	minorByUUID := procMinorsByUUID(h.procGPUs)
+	var devs []string
+	for _, id := range strings.Split(ids, ",") {
+		uuid := id
+		if u, isIndex := uuidByIndex[id]; isIndex {
+			uuid = u
+		}
+		minor, ok := minorByUUID[uuid]
+		if !ok {
+			return nil
+		}
+		devs = append(devs, filepath.Join(h.dev, "nvidia"+minor))
+	}
+	for _, n := range nvidiaControlNodes {
+		p := filepath.Join(h.dev, n)
+		if _, err := os.Stat(p); err == nil {
+			devs = append(devs, p)
+		}
+	}
+	return devs
+}
+
+// parseSMIIndexUUIDs reads `nvidia-smi --query-gpu=index,uuid
+// --format=csv,noheader` output into index → UUID.
+func parseSMIIndexUUIDs(out string) map[string]string {
+	m := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if idx, uuid, ok := strings.Cut(line, ","); ok {
+			m[strings.TrimSpace(idx)] = strings.TrimSpace(uuid)
+		}
+	}
+	return m
+}
+
+// procMinorsByUUID maps each GPU's UUID to its /dev/nvidiaN minor number from
+// the driver's per-GPU <procGPUs>/<pci-bus-id>/information files.
+func procMinorsByUUID(procGPUs string) map[string]string {
+	m := map[string]string{}
+	infos, _ := filepath.Glob(filepath.Join(procGPUs, "*", "information"))
+	for _, p := range infos {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		var uuid, minor string
+		for _, line := range strings.Split(string(b), "\n") {
+			k, v, _ := strings.Cut(line, ":")
+			switch strings.TrimSpace(k) {
+			case "GPU UUID":
+				uuid = strings.TrimSpace(v)
+			case "Device Minor":
+				minor = strings.TrimSpace(v)
+			}
+		}
+		if uuid != "" && minor != "" {
+			m[uuid] = minor
+		}
+	}
+	return m
+}
+
+// allNvidiaNodes returns every NVIDIA device node in dev (nvidia0..N plus the
+// control nodes), skipping the nvidia-caps directory, which is not a node.
+func allNvidiaNodes(dev string) []string {
+	matches, _ := filepath.Glob(filepath.Join(dev, "nvidia*"))
 	var devs []string
 	for _, m := range matches {
 		if fi, err := os.Stat(m); err == nil && !fi.IsDir() {

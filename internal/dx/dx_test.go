@@ -1,6 +1,8 @@
 package dx
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -136,5 +138,105 @@ func TestInspect_ParsesGPUs(t *testing.T) {
 	}
 	if infos[0].CWDLabel != "/home/me/proj" {
 		t.Errorf("CWDLabel = %q, want %q", infos[0].CWDLabel, "/home/me/proj")
+	}
+}
+
+// fakeGPUHost builds a host with two GPUs whose /dev minor numbers are the
+// reverse of their NVML index, so a test only passes if it maps index → UUID →
+// minor instead of assuming index == minor.
+func fakeGPUHost(t *testing.T) gpuHost {
+	t.Helper()
+	dev, proc := t.TempDir(), t.TempDir()
+	for _, n := range []string{"nvidia0", "nvidia1", "nvidiactl", "nvidia-uvm", "nvidia-uvm-tools", "nvidia-modeset"} {
+		if err := os.WriteFile(filepath.Join(dev, n), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Mkdir(filepath.Join(dev, "nvidia-caps"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for bus, info := range map[string]string{
+		"0000:01:00.0": "Model:\t\t NVIDIA X\nGPU UUID:\t GPU-aaaa\nDevice Minor:\t 1\n",
+		"0000:02:00.0": "Model:\t\t NVIDIA X\nGPU UUID:\t GPU-bbbb\nDevice Minor:\t 0\n",
+	} {
+		if err := os.Mkdir(filepath.Join(proc, bus), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(proc, bus, "information"), []byte(info), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return gpuHost{
+		dev:      dev,
+		procGPUs: proc,
+		smiIndexUUIDs: func() (string, error) {
+			return "0, GPU-aaaa\n1, GPU-bbbb\n", nil
+		},
+	}
+}
+
+// Pinning one GPU by index must pass that GPU's device node (looked up by its
+// UUID, not assumed from the index) plus the shared control nodes, and never
+// the other GPU's node.
+func TestGPUDevices_PinnedIndex(t *testing.T) {
+	h := fakeGPUHost(t)
+	got := gpuDevices("device=0", h)
+	want := []string{
+		filepath.Join(h.dev, "nvidia1"),
+		filepath.Join(h.dev, "nvidiactl"),
+		filepath.Join(h.dev, "nvidia-uvm"),
+		filepath.Join(h.dev, "nvidia-uvm-tools"),
+		filepath.Join(h.dev, "nvidia-modeset"),
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("gpuDevices(device=0) = %v\nwant %v", got, want)
+	}
+}
+
+// A GPU pinned by UUID resolves straight to its device node.
+func TestGPUDevices_PinnedUUID(t *testing.T) {
+	h := fakeGPUHost(t)
+	got := gpuDevices("device=GPU-bbbb", h)
+	if len(got) == 0 || got[0] != filepath.Join(h.dev, "nvidia0") {
+		t.Fatalf("gpuDevices(device=GPU-bbbb) = %v, want nvidia0 first", got)
+	}
+}
+
+// "all" exposes every GPU, so every NVIDIA device node is passed (but not the
+// nvidia-caps directory).
+func TestGPUDevices_All(t *testing.T) {
+	h := fakeGPUHost(t)
+	got := gpuDevices("all", h)
+	if len(got) != 6 {
+		t.Fatalf("gpuDevices(all) = %v, want the 6 device nodes", got)
+	}
+	for _, p := range got {
+		if filepath.Base(p) == "nvidia-caps" {
+			t.Fatalf("gpuDevices(all) included the nvidia-caps directory: %v", got)
+		}
+	}
+}
+
+// When the request can't be mapped to specific GPUs, no extra nodes are passed:
+// handing over every GPU's node would widen access past what was requested.
+func TestGPUDevices_UnmappableAddsNothing(t *testing.T) {
+	h := fakeGPUHost(t)
+	for _, gpus := range []string{"2", "device=7", "device=0,7"} {
+		if got := gpuDevices(gpus, h); got != nil {
+			t.Errorf("gpuDevices(%q) = %v, want nil", gpus, got)
+		}
+	}
+	h.smiIndexUUIDs = func() (string, error) { return "", os.ErrNotExist }
+	if got := gpuDevices("device=0", h); got != nil {
+		t.Errorf("nvidia-smi failing: gpuDevices(device=0) = %v, want nil", got)
+	}
+}
+
+// A device list the user already quoted for docker maps the same as unquoted.
+func TestGPUDevices_UserQuotedList(t *testing.T) {
+	h := fakeGPUHost(t)
+	got := gpuDevices(`"device=0,1"`, h)
+	if len(got) < 2 || got[0] != filepath.Join(h.dev, "nvidia1") || got[1] != filepath.Join(h.dev, "nvidia0") {
+		t.Fatalf(`gpuDevices("device=0,1" quoted) = %v, want nvidia1, nvidia0 first`, got)
 	}
 }
