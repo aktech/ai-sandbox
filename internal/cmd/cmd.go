@@ -223,26 +223,31 @@ func (h Handler) LS() error {
 
 // doCopies runs the resolved copy specs. In sync mode (WaitCopies=true) each
 // copy runs sequentially with per-entry logging so the shell only opens after
-// all copies finish. In async mode (default) copies are launched as detached
-// subprocesses and the method returns immediately.
+// all copies finish. In async mode (default) each copy runs in a background
+// `aisb __copy` process, which calls the same dx.Copy, and the method returns
+// immediately.
 func (h Handler) doCopies(name string, copies []mountresolver.CopySpec) {
 	if len(copies) == 0 {
 		return
 	}
 	if h.WaitCopies {
 		for _, cp := range copies {
-			dest := name + ":" + cp.Dest
-			h.Log.Step(fmt.Sprintf("copying %s -> %s", cp.Source, dest))
-			if err := dx.Copy(h.Docker, cp.Source, dest); err != nil {
+			h.Log.Step(fmt.Sprintf("copying %s -> %s:%s", cp.Source, name, cp.Dest))
+			if err := dx.Copy(h.Docker, name, cp.Source, cp.Dest); err != nil {
 				h.Log.Warn(fmt.Sprintf("copy failed: %v", err))
 			}
 		}
 	} else {
 		h.Log.Log("warming caches in background...")
+		self, err := os.Executable()
+		if err != nil {
+			h.Log.Warn(fmt.Sprintf("background copies skipped: %v", err))
+			return
+		}
 		for _, cp := range copies {
-			dest := name + ":" + cp.Dest
-			cmd := exec.Command("docker", "cp", "-a", cp.Source, dest)
-			_ = cmd.Start() // detached; reparented to init when aisb exec's the shell
+			// Not waited on: once aisb execs into the shell, these keep running
+			// as children of the shell process.
+			_ = exec.Command(self, "__copy", name, cp.Source, cp.Dest).Start()
 		}
 	}
 }
