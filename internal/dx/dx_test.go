@@ -69,25 +69,53 @@ func TestCreate_QuotesGPUDeviceList(t *testing.T) {
 	}
 }
 
-// Copy must invoke `docker cp -a` with the correct src and dest arguments.
-func TestCopy_UsesArchiveFlag(t *testing.T) {
-	r := &recorder{}
-	_ = Copy(r, "/host/path", "aisb-x:/container/path")
+// callLog is a fake Executor that records every command it is asked to run.
+type callLog struct{ calls [][]string }
 
-	if len(r.args) < 3 {
-		t.Fatalf("Copy sent %d args, want at least 3\nfull argv: %v", len(r.args), r.args)
+func (c *callLog) Output(args ...string) (string, error) { return "", nil }
+func (c *callLog) Run(args ...string) error              { c.calls = append(c.calls, args); return nil }
+func (c *callLog) RunSilent(args ...string) error        { c.calls = append(c.calls, args); return nil }
+func (c *callLog) Replace(args ...string) error          { c.calls = append(c.calls, args); return nil }
+
+func joinCalls(calls [][]string) string {
+	var lines []string
+	for _, c := range calls {
+		lines = append(lines, strings.Join(c, " "))
 	}
-	if r.args[0] != "cp" {
-		t.Errorf("arg[0] = %q, want %q", r.args[0], "cp")
+	return strings.Join(lines, "\n")
+}
+
+// docker cp nests a directory inside dest when dest already exists, and fails
+// when dest's parent is missing. Copying a directory must therefore create
+// dest first and copy the directory's contents, so they land at dest whether
+// or not it existed.
+func TestCopy_DirectoryLandsAtDest(t *testing.T) {
+	src := t.TempDir()
+	c := &callLog{}
+	if err := Copy(c, "aisb-x", src, "/home/u/.cache/pip"); err != nil {
+		t.Fatal(err)
 	}
-	if r.args[1] != "-a" {
-		t.Errorf("arg[1] = %q, want %q", r.args[1], "-a")
+	want := "exec aisb-x mkdir -p /home/u/.cache/pip\n" +
+		"cp -a " + src + "/. aisb-x:/home/u/.cache/pip"
+	if got := joinCalls(c.calls); got != want {
+		t.Fatalf("calls:\n%s\nwant:\n%s", got, want)
 	}
-	if r.args[2] != "/host/path" {
-		t.Errorf("arg[2] = %q, want %q", r.args[2], "/host/path")
+}
+
+// A single file is copied to dest itself, after creating dest's parent.
+func TestCopy_FileLandsAtDest(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "netrc")
+	if err := os.WriteFile(src, nil, 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if r.args[3] != "aisb-x:/container/path" {
-		t.Errorf("arg[3] = %q, want %q", r.args[3], "aisb-x:/container/path")
+	c := &callLog{}
+	if err := Copy(c, "aisb-x", src, "/home/u/.config/tool/netrc"); err != nil {
+		t.Fatal(err)
+	}
+	want := "exec aisb-x mkdir -p /home/u/.config/tool\n" +
+		"cp -a " + src + " aisb-x:/home/u/.config/tool/netrc"
+	if got := joinCalls(c.calls); got != want {
+		t.Fatalf("calls:\n%s\nwant:\n%s", got, want)
 	}
 }
 

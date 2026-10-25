@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -342,10 +343,24 @@ func Start(e Executor, name string) error  { return e.RunSilent("start", name) }
 func Stop(e Executor, name string) error   { return e.RunSilent("stop", name) }
 func Remove(e Executor, name string) error { return e.RunSilent("rm", "-f", name) }
 
-// Copy runs `docker cp -a` to copy a file or directory from the host into
-// the container. dest must be of the form "<container-name>:<path>".
-func Copy(e Executor, src, dest string) error {
-	return e.RunSilent("cp", "-a", src, dest)
+// Copy copies a host file or directory to dest inside container name with
+// `docker cp -a`. docker cp nests a directory inside dest when dest exists and
+// fails when dest's parent is missing, so a directory's contents are copied
+// into a freshly created dest, and a file goes to dest after creating its
+// parent.
+func Copy(e Executor, name, src, dest string) error {
+	fi, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	dir, from := path.Dir(dest), src
+	if fi.IsDir() {
+		dir, from = dest, src+"/."
+	}
+	if err := e.RunSilent("exec", name, "mkdir", "-p", dir); err != nil {
+		return err
+	}
+	return e.RunSilent("cp", "-a", from, name+":"+dest)
 }
 
 // PrintStatusTable streams a one-row docker ps table for `name`.

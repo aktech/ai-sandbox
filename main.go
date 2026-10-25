@@ -176,12 +176,16 @@ Usage:
   aisb ls          list all aisb-* containers
   aisb build       (re)build the image
 
+  --wait-copies    with aisb / aisb up: finish copies before opening the shell
+
 Config file (JSON):
   ` + filepath.Join(os.Getenv("HOME"), ".config/ai-sandbox/config.json") + `
 
   Keys:
     mounts         declarative mount list; each entry is "src" or "src:dest"
     extra_mounts   appended after mounts
+    copies         one-way copies into a new sandbox; same "src" / "src:dest" syntax
+    extra_copies   appended after copies
     memory / cpus  resource limits
     gpus           docker --gpus value: "all", "device=0,1", "2" (needs NVIDIA Container Toolkit)
     image          custom image tag
@@ -311,6 +315,12 @@ func main() {
 		dieOn(h.LS())
 	case "build":
 		dieOn(cmdBuild(log))
+	case "__copy":
+		// Internal: one background copy started by `aisb` (async copies).
+		if len(os.Args) != 5 {
+			log.Die("usage: aisb __copy <container> <src> <dest>", 2)
+		}
+		dieOn(h.CopyOne(os.Args[2], os.Args[3], os.Args[4]))
 	case "-h", "--help", "help":
 		usage()
 	default:

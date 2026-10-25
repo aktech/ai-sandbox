@@ -78,6 +78,14 @@ list in a config file:
   `src:dest` to mount it at a different path (e.g. a repo-local gitconfig
   at `~/.gitconfig` inside the sandbox).
 - `extra_mounts` — appended to `mounts`. Use for per-project additions.
+- `copies` / `extra_copies`: host paths copied *into* the sandbox when its
+  container is first created, using the same `src` / `src:dest` syntax as
+  `mounts`. Unlike a mount, nothing the agent changes ever flows back to the
+  host, so this is the safe way to pre-warm caches such as `~/.cache/pip` or
+  `~/go/pkg/mod`. A directory's contents land at `dest`. Copies run in the
+  background by default; `aisb --wait-copies` waits for them before opening
+  the shell. They only happen on creation (`aisb rm` then `aisb` to redo
+  them) and are skipped by `aisb create`.
 - `memory`, `cpus`, `gpus`, `image` — optional overrides. Set them under
   `default` to apply everywhere, or under a project to scope them.
 - `gpus` — passed straight to `docker run --gpus` (`"all"`, `"device=0,1"`,
