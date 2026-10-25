@@ -1,6 +1,6 @@
-// Package cmd implements the per-subcommand business logic for psb.
+// Package cmd implements the per-subcommand business logic for aisb.
 //
-// Each method on Handler corresponds to one CLI verb (`psb up`, `psb stop`,
+// Each method on Handler corresponds to one CLI verb (`aisb up`, `aisb stop`,
 // etc.) and returns an error rather than killing the process — main.go
 // decides how to surface failures. The image-build verb stays in main.go
 // because it is bound to an embedded asset that only the binary's package
@@ -10,6 +10,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -19,7 +20,7 @@ import (
 	"github.com/aktech/ai-sandbox/internal/proxy"
 )
 
-// Logger is the subset of psb's logger that command handlers need. Defining
+// Logger is the subset of aisb's logger that command handlers need. Defining
 // it here (rather than importing main's logger type) keeps cmd self-
 // contained and lets tests stub it. Die is intentionally absent — handlers
 // return errors instead of calling os.Exit.
@@ -32,8 +33,9 @@ type Logger interface {
 
 // Handler bundles the dependencies every command needs.
 type Handler struct {
-	Log    Logger
-	Docker dx.Executor
+	Log        Logger
+	Docker     dx.Executor
+	WaitCopies bool // wait for copies to complete before entering the shell
 
 	// caHostPath is the host path of the proxy CA cert, stashed by ensure when
 	// proxy mode is active so create/buildSpec can mount it into the sandbox.
@@ -41,12 +43,13 @@ type Handler struct {
 }
 
 // ensure creates the container (or starts it if it already exists) without
-// attaching a shell. extraLabels are added alongside the default psb.cwd label.
-func (h Handler) ensure(name string, c cfg.Effective, home, cwd string, extraLabels map[string]string) error {
+// attaching a shell. extraLabels are added alongside the default aisb.cwd label.
+// It returns whether a new container was created.
+func (h Handler) ensure(name string, c cfg.Effective, home, cwd string, extraLabels map[string]string) (bool, error) {
 	h.Log.Log(fmt.Sprintf("project: %s  container: %s", filepath.Base(cwd), name))
 
 	if !dx.ImageExists(h.Docker, c.Image) {
-		return fmt.Errorf("image %s not found — run `psb build`", c.Image)
+		return false, fmt.Errorf("image %s not found — run `aisb build`", c.Image)
 	}
 
 	// Proxy mode: bring up the shared credential proxy and the sandbox's own
@@ -60,19 +63,19 @@ func (h Handler) ensure(name string, c cfg.Effective, home, cwd string, extraLab
 		if !dx.ContainerRunning(h.Docker, proxyContainer) {
 			payload, _, err := h.proxyPayload(c)
 			if err != nil {
-				return err
+				return false, err
 			}
 			if err := ensureProxyRunning(h.Docker, proxyImage(), payload); err != nil {
-				return fmt.Errorf("start proxy: %w", err)
+				return false, fmt.Errorf("start proxy: %w", err)
 			}
 		}
 		if err := setupSandboxNet(h.Docker, name); err != nil {
-			return fmt.Errorf("setup sandbox network: %w", err)
+			return false, fmt.Errorf("setup sandbox network: %w", err)
 		}
 		// Push this project's allowlist to the proxy (no password needed). The
 		// proxy merges it by subnet, so other sandboxes keep their own rules.
 		if err := deliverRules(h.Docker, c, name); err != nil {
-			return fmt.Errorf("deliver proxy rules: %w", err)
+			return false, fmt.Errorf("deliver proxy rules: %w", err)
 		}
 	}
 
@@ -80,35 +83,48 @@ func (h Handler) ensure(name string, c cfg.Effective, home, cwd string, extraLab
 		if !dx.ContainerRunning(h.Docker, name) {
 			h.Log.Step("starting existing container")
 			if err := dx.Start(h.Docker, name); err != nil {
-				return err
+				return false, err
 			}
 		} else {
 			h.Log.Log("container already running")
 		}
+		return false, nil
 	} else {
 		if err := h.create(name, c, home, cwd, extraLabels); err != nil {
-			return err
+			return false, err
 		}
 		h.Log.OK("container created")
+		return true, nil
 	}
-	return nil
 }
 
 // Up creates (or starts) the container for the project rooted at cwd and
 // replaces the current process with an interactive shell inside it.
 func (h Handler) Up(name string, c cfg.Effective, home, cwd string) error {
-	if err := h.ensure(name, c, home, cwd, nil); err != nil {
+	created, err := h.ensure(name, c, home, cwd, nil)
+	if err != nil {
 		return err
+	}
+	if created && len(c.Copies) > 0 {
+		copies := mountresolver.ResolveCopies(c.Copies,
+			mountresolver.Env{Home: home, CWD: cwd, SharedDir: c.SharedDir}, h.Log)
+		h.doCopies(name, copies)
 	}
 	h.Log.OK("entering shell — run `pi` (or `claude`) inside")
 	return dx.Shell(h.Docker, name)
 }
 
 // Create prepares the container non-interactively (no shell) and prints its
-// name to stdout, so other tools can layer on top of a psb sandbox while
-// reusing psb's mount/image configuration.
+// name to stdout, so other tools can layer on top of an aisb sandbox while
+// reusing aisb's mount/image configuration.
+//
+// Copies are intentionally skipped for create (non-interactive).
+// External tools using create may have their own caching strategy,
+// and copies would also force additional startup time, changing the
+// non-interactive contract.
 func (h Handler) Create(name string, c cfg.Effective, home, cwd string, extraLabels map[string]string) error {
-	if err := h.ensure(name, c, home, cwd, extraLabels); err != nil {
+	_, err := h.ensure(name, c, home, cwd, extraLabels)
+	if err != nil {
 		return err
 	}
 	fmt.Println(name)
@@ -139,7 +155,7 @@ func (h Handler) RM(name string) error {
 	}
 	// Tear down the sandbox's private network if proxy mode created one. The
 	// shared proxy container is left running for other sandboxes; stop it
-	// explicitly with `psb proxy stop`.
+	// explicitly with `aisb proxy stop`.
 	teardownSandboxNet(h.Docker, name)
 	h.Log.OK("removed")
 	return nil
@@ -155,26 +171,26 @@ func (h Handler) Status(name string) error {
 	return dx.PrintStatusTable(h.Docker, name)
 }
 
-// LS prints a colorized table of all psb-* containers.
+// LS prints a colorized table of all aisb-* containers.
 func (h Handler) LS() error {
-	names, err := dx.ListNames(h.Docker, "psb-")
+	names, err := dx.ListNames(h.Docker, "aisb-")
 	if err != nil {
 		return err
 	}
 	if len(names) == 0 {
-		fmt.Println("no psb-* containers")
+		fmt.Println("no aisb-* containers")
 		return nil
 	}
 	infos, err := dx.Inspect(h.Docker, names...)
 	if err != nil {
 		return err
 	}
-	rows := [][5]string{{"name", "uptime", "cpus", "mem", "cwd"}}
+	rows := [][6]string{{"name", "uptime", "cpus", "mem", "gpus", "cwd"}}
 	for _, i := range infos {
-		rows = append(rows, [5]string{i.Name, dx.CompactUptime(i.Status, i.StartedAt),
-			dx.CompactCPUs(i.NanoCpus), dx.CompactMem(i.Memory), i.CWDLabel})
+		rows = append(rows, [6]string{i.Name, dx.CompactUptime(i.Status, i.StartedAt),
+			dx.CompactCPUs(i.NanoCpus), dx.CompactMem(i.Memory), i.GPUs, i.CWDLabel})
 	}
-	w := [5]int{}
+	w := [6]int{}
 	for _, r := range rows {
 		for i, c := range r {
 			if n := len(c); n > w[i] {
@@ -188,24 +204,51 @@ func (h Handler) LS() error {
 		c1 := pad(r[1], w[1])
 		c2 := pad(r[2], w[2])
 		c3 := pad(r[3], w[3])
-		c4 := r[4]
+		c4 := pad(r[4], w[4])
+		c5 := r[5]
 		if i == 0 {
-			fmt.Printf("\033[1;36m%s\033[0m  \033[1;36m%s\033[0m  \033[1;36m%s\033[0m  \033[1;36m%s\033[0m  \033[1;36m%s\033[0m\n",
-				c0, c1, c2, c3, c4)
+			fmt.Printf("\033[1;36m%s\033[0m  \033[1;36m%s\033[0m  \033[1;36m%s\033[0m  \033[1;36m%s\033[0m  \033[1;36m%s\033[0m  \033[1;36m%s\033[0m\n",
+				c0, c1, c2, c3, c4, c5)
 		} else {
 			st := fmt.Sprintf("\033[2m%s\033[0m", c1)
 			if last := r[1][len(r[1])-1]; last == 's' || last == 'm' || last == 'h' || last == 'd' {
 				st = fmt.Sprintf("\033[32m%s\033[0m", c1)
 			}
-			fmt.Printf("\033[35m%s\033[0m  %s  \033[33m%s\033[0m  \033[33m%s\033[0m  \033[34m%s\033[0m\n",
-				c0, st, c2, c3, c4)
+			fmt.Printf("\033[35m%s\033[0m  %s  \033[33m%s\033[0m  \033[33m%s\033[0m  \033[33m%s\033[0m  \033[34m%s\033[0m\n",
+				c0, st, c2, c3, c4, c5)
 		}
 	}
 	return nil
 }
 
+// doCopies runs the resolved copy specs. In sync mode (WaitCopies=true) each
+// copy runs sequentially with per-entry logging so the shell only opens after
+// all copies finish. In async mode (default) copies are launched as detached
+// subprocesses and the method returns immediately.
+func (h Handler) doCopies(name string, copies []mountresolver.CopySpec) {
+	if len(copies) == 0 {
+		return
+	}
+	if h.WaitCopies {
+		for _, cp := range copies {
+			dest := name + ":" + cp.Dest
+			h.Log.Step(fmt.Sprintf("copying %s -> %s", cp.Source, dest))
+			if err := dx.Copy(h.Docker, cp.Source, dest); err != nil {
+				h.Log.Warn(fmt.Sprintf("copy failed: %v", err))
+			}
+		}
+	} else {
+		h.Log.Log("warming caches in background...")
+		for _, cp := range copies {
+			dest := name + ":" + cp.Dest
+			cmd := exec.Command("docker", "cp", "-a", cp.Source, dest)
+			_ = cmd.Start() // detached; reparented to init when aisb exec's the shell
+		}
+	}
+}
+
 // create issues `docker run -d` for a fresh container. Internal helper
-// shared by Up and Create. extraLabels are merged on top of psb.cwd.
+// shared by Up and Create. extraLabels are merged on top of aisb.cwd.
 func (h Handler) create(name string, c cfg.Effective, home, cwd string, extraLabels map[string]string) error {
 	h.Log.Step(fmt.Sprintf("creating container %s (image=%s, mem=%s, cpus=%s)", name, c.Image, c.Memory, c.CPUs))
 	if err := os.MkdirAll(c.SharedDir, 0o755); err != nil {
@@ -216,7 +259,7 @@ func (h Handler) create(name string, c cfg.Effective, home, cwd string, extraLab
 }
 
 // caInContainer is where the proxy's CA cert is mounted inside the sandbox.
-const caInContainer = "/etc/psb/ca.crt"
+const caInContainer = "/etc/aisb/ca.crt"
 
 // buildSpec assembles the docker run spec. When c.Proxy is nil it reproduces
 // the original behavior exactly (real ANTHROPIC_API_KEY, default network). When
@@ -226,7 +269,7 @@ const caInContainer = "/etc/psb/ca.crt"
 func buildSpec(name string, c cfg.Effective, home, cwd string, extraLabels map[string]string, caHostPath string, warn mountresolver.Warner) dx.ContainerSpec {
 	mounts := mountresolver.Resolve(c.Mounts, c.ExtraMounts,
 		mountresolver.Env{Home: home, CWD: cwd, SharedDir: c.SharedDir}, warn)
-	labels := map[string]string{"psb.cwd": cwd}
+	labels := map[string]string{"aisb.cwd": cwd}
 	for k, v := range extraLabels {
 		labels[k] = v
 	}
@@ -236,7 +279,7 @@ func buildSpec(name string, c cfg.Effective, home, cwd string, extraLabels map[s
 		"HOMELAB_URL": os.Getenv("HOMELAB_URL"),
 	}
 	spec := dx.ContainerSpec{
-		Name: name, Image: c.Image, Memory: c.Memory, CPUs: c.CPUs,
+		Name: name, Image: c.Image, Memory: c.Memory, CPUs: c.CPUs, GPUs: c.GPUs,
 		Workdir: cwd, Labels: labels, Env: env, Mounts: mounts, Ports: c.Ports,
 	}
 	if c.Proxy == nil {

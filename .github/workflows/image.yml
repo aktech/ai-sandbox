@@ -25,9 +25,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Build psb
-        run: go build -trimpath -ldflags='-s -w' -o bin/psb .
-      - name: Build image with psb
-        run: ./bin/psb build
+      - name: Build aisb
+        run: go build -trimpath -ldflags='-s -w' -o bin/aisb .
+      - name: Build image with aisb
+        run: ./bin/aisb build
       - name: Show image
         run: docker images ai-sandbox-pi:latest

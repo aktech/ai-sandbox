@@ -7,6 +7,94 @@ import (
 	"testing"
 )
 
+// ---------- ResolveCopies tests ----------
+
+// A bare copy entry (no colon) copies from the expanded source to the same
+// path inside the container.
+func TestResolveCopies_BareEntry_SrcEqualsDest(t *testing.T) {
+	home := t.TempDir()
+	src := filepath.Join(home, "cache")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got := ResolveCopies([]string{"{{HOME}}/cache"}, Env{Home: home}, nil)
+	want := []CopySpec{{Source: src, Dest: src}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+}
+
+// "src:dest" remaps the path inside the container and expands both sides
+// independently. Only the source must exist on the host.
+func TestResolveCopies_SrcDest_RemapsPath(t *testing.T) {
+	home := t.TempDir()
+	src := filepath.Join(home, "pip-cache")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got := ResolveCopies([]string{"{{HOME}}/pip-cache:{{HOME}}/.cache/pip"},
+		Env{Home: home}, nil)
+	want := []CopySpec{{
+		Source: src,
+		Dest:   filepath.Join(home, ".cache", "pip"),
+	}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+}
+
+// A missing source path must be skipped with a warning rather than causing
+// an error.
+func TestResolveCopies_MissingSource_Skipped(t *testing.T) {
+	got := ResolveCopies([]string{"/no/such/path:/dest"}, Env{}, nil)
+	if len(got) != 0 {
+		t.Fatalf("got %#v, want empty", got)
+	}
+}
+
+// When the same source appears twice, only the first occurrence is kept.
+func TestResolveCopies_DedupeBySource(t *testing.T) {
+	home := t.TempDir()
+	src := filepath.Join(home, "cache")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got := ResolveCopies([]string{"{{HOME}}/cache", "{{HOME}}/cache:{{HOME}}/other"},
+		Env{Home: home}, nil)
+	if len(got) != 1 {
+		t.Fatalf("got %d specs, want 1 (deduped by source)", len(got))
+	}
+	// First occurrence's dest is kept.
+	if got[0].Dest != src {
+		t.Fatalf("Dest = %q, want %q (first occurrence's dest)", got[0].Dest, src)
+	}
+}
+
+// Multiple different sources all targeting the same destination must all be
+// included (different sources, not deduped).
+func TestResolveCopies_DifferentSources_AllKept(t *testing.T) {
+	home := t.TempDir()
+	src1 := filepath.Join(home, "cache1")
+	src2 := filepath.Join(home, "cache2")
+	if err := os.MkdirAll(src1, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(src2, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got := ResolveCopies([]string{"{{HOME}}/cache1", "{{HOME}}/cache2"},
+		Env{Home: home}, nil)
+	if len(got) != 2 {
+		t.Fatalf("got %d specs, want 2 (different sources)", len(got))
+	}
+}
+
+// ---------- existing mount-resolver tests below ----------
+
 func touch(t *testing.T, path string) {
 	t.Helper()
 	if err := os.WriteFile(path, nil, 0o644); err != nil {

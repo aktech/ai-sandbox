@@ -17,7 +17,7 @@ type Subnet struct {
 // and is global (a host is injected the same way regardless of caller). The
 // rule set carries no secret values, only the secret names the injector looks
 // up in the separately-delivered secret map, so it is safe to (re)deliver on
-// every psb without unlocking the store.
+// every aisb without unlocking the store.
 type RuleSet struct {
 	Universal []string              `json:"universal"`
 	Projects  []Subnet              `json:"projects"`

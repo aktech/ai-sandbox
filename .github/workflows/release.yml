@@ -30,16 +30,16 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: '0'
         run: |
-          out="psb-${{ matrix.goos }}-${{ matrix.goarch }}"
+          out="aisb-${{ matrix.goos }}-${{ matrix.goarch }}"
           go build -trimpath -ldflags='-s -w' -o "$out" .
           tar -czf "$out.tar.gz" "$out"
           sha256sum "$out.tar.gz" > "$out.tar.gz.sha256"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: psb-${{ matrix.goos }}-${{ matrix.goarch }}
+          name: aisb-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
-            psb-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
-            psb-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz.sha256
+            aisb-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
+            aisb-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz.sha256
           if-no-files-found: error
 
   release:

@@ -1,14 +1,14 @@
-// Command psb-proxy is the credential-injecting egress proxy that runs in its
+// Command aisb-proxy is the credential-injecting egress proxy that runs in its
 // own container. Startup flow:
 //
-//   1. psb starts the container detached.
-//   2. psb delivers the secrets payload (CA cert+key + secret values) by
-//      running this binary with --write-payload via `docker exec -i`; it lands
-//      on a tmpfs file. The serving process reads it once and builds the proxy.
-//   3. On every `psb`, psb delivers the current rule set (per-project + universal
-//      allowlists, inject rules) via --write-rules. The rule set carries no
-//      secret values, so it needs no store unlock. The serving process watches
-//      that file and hot-swaps the rules live.
+//  1. aisb starts the container detached.
+//  2. aisb delivers the secrets payload (CA cert+key + secret values) by
+//     running this binary with --write-payload via `docker exec -i`; it lands
+//     on a tmpfs file. The serving process reads it once and builds the proxy.
+//  3. On every `aisb`, aisb delivers the current rule set (per-project + universal
+//     allowlists, inject rules) via --write-rules. The rule set carries no
+//     secret values, so it needs no store unlock. The serving process watches
+//     that file and hot-swaps the rules live.
 //
 // Nothing sensitive is taken from argv or the environment, nor written to any
 // host disk: the tmpfs is RAM-backed inside the container.
@@ -32,8 +32,8 @@ func die(msg string, args ...any) {
 }
 
 const (
-	payloadPath = "/run/psb/payload.json" // secrets + CA, delivered once
-	rulesDir    = "/run/psb/rules.d"      // one rule file per project, delivered per psb
+	payloadPath = "/run/aisb/payload.json" // secrets + CA, delivered once
+	rulesDir    = "/run/aisb/rules.d"      // one rule file per project, delivered per aisb
 )
 
 func main() {
@@ -47,7 +47,7 @@ func main() {
 		case "--write-rules":
 			// `--write-rules <key>`: store this project's rule file as
 			// rules.d/<key>.json. Each project owns its own file, so concurrent
-			// psb runs never clobber one another.
+			// aisb runs never clobber one another.
 			if len(os.Args) < 3 {
 				die("missing key", "arg", "--write-rules")
 			}

@@ -16,10 +16,10 @@ import (
 	"golang.org/x/term"
 )
 
-// configDir is where psb keeps the secret store and CA. It follows the config
-// file's directory (PSB_CONFIG_FILE) so everything lives together.
+// configDir is where aisb keeps the secret store and CA. It follows the config
+// file's directory (AISB_CONFIG_FILE) so everything lives together.
 func configDir() string {
-	if p := os.Getenv("PSB_CONFIG_FILE"); p != "" {
+	if p := os.Getenv("AISB_CONFIG_FILE"); p != "" {
 		return filepath.Dir(p)
 	}
 	return filepath.Join(os.Getenv("HOME"), ".config", "ai-sandbox")
@@ -29,11 +29,11 @@ func secretsPath() string { return filepath.Join(configDir(), "secrets.enc") }
 func caCertPath() string  { return filepath.Join(configDir(), "ca.crt") }
 func caKeyPath() string   { return filepath.Join(configDir(), "ca.key") }
 
-// masterPassword returns the store password from PSB_MASTER_PASSWORD if set
+// masterPassword returns the store password from AISB_MASTER_PASSWORD if set
 // (the non-interactive path), otherwise prompts at the terminal, echoing one
 // '*' per typed character.
 func masterPassword(prompt string) ([]byte, error) {
-	if v := os.Getenv("PSB_MASTER_PASSWORD"); v != "" {
+	if v := os.Getenv("AISB_MASTER_PASSWORD"); v != "" {
 		return []byte(v), nil
 	}
 	return readPasswordMasked(int(os.Stdin.Fd()), prompt)
@@ -41,7 +41,7 @@ func masterPassword(prompt string) ([]byte, error) {
 
 // secretsPayload builds the JSON delivered to the proxy once at start: CA
 // cert+key and the decrypted secret values. The allow/inject rules are sent
-// separately (and without secrets) so they can be refreshed on every psb.
+// separately (and without secrets) so they can be refreshed on every aisb.
 func secretsPayload(secrets map[string]string, caCert, caKey string) ([]byte, error) {
 	return json.Marshal(map[string]any{
 		"ca_cert": caCert,
@@ -56,11 +56,11 @@ func secretsPayload(secrets map[string]string, caCert, caKey string) ([]byte, er
 func (h Handler) proxyPayload(c cfg.Effective) (payload []byte, caHostPath string, err error) {
 	certPEM, err := os.ReadFile(caCertPath())
 	if err != nil {
-		return nil, "", fmt.Errorf("read CA cert (run `psb proxy init`): %w", err)
+		return nil, "", fmt.Errorf("read CA cert (run `aisb proxy init`): %w", err)
 	}
 	keyPEM, err := os.ReadFile(caKeyPath())
 	if err != nil {
-		return nil, "", fmt.Errorf("read CA key (run `psb proxy init`): %w", err)
+		return nil, "", fmt.Errorf("read CA key (run `aisb proxy init`): %w", err)
 	}
 	pw, err := masterPassword("master password: ")
 	if err != nil {
@@ -87,7 +87,7 @@ func (h Handler) ProxyInit() error {
 	if _, err := os.Stat(caCertPath()); err == nil {
 		return fmt.Errorf("CA already exists at %s; remove it to regenerate", caCertPath())
 	}
-	certPEM, keyPEM, err := ca.Generate("psb proxy CA")
+	certPEM, keyPEM, err := ca.Generate("aisb proxy CA")
 	if err != nil {
 		return err
 	}
@@ -109,7 +109,7 @@ func (h Handler) ProxyInit() error {
 }
 
 // SecretSet stores a value for name. The value is read from stdin when piped
-// (e.g. `grep ... | psb secret set github`) or prompted without echo at a
+// (e.g. `grep ... | aisb secret set github`) or prompted without echo at a
 // terminal. It is never passed as an argument, so it cannot leak via shell
 // history or the process table.
 func (h Handler) SecretSet(name string) error {

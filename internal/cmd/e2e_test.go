@@ -14,14 +14,14 @@ func dockerAvailable() bool {
 }
 
 // TestE2E_InternalNetBlocksDirectEgress confirms the security invariant: a
-// container on a psb internal network cannot reach the internet directly. This
+// container on a aisb internal network cannot reach the internet directly. This
 // is what makes the proxy the only egress path; if it ever regresses, the
 // allowlist becomes advisory rather than enforced.
 func TestE2E_InternalNetBlocksDirectEgress(t *testing.T) {
 	if !dockerAvailable() {
 		t.Skip("docker not available")
 	}
-	net := "psb-net-e2e-test"
+	net := "aisb-net-e2e-test"
 	exec.Command("docker", "network", "create", "--internal", net).Run()
 	defer exec.Command("docker", "network", "rm", net).Run()
 

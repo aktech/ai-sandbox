@@ -55,6 +55,42 @@ func TestResolve_ExplicitMounts_NoFallback(t *testing.T) {
 	}
 }
 
+// gpus set in the global default block must flow through to Effective so a
+// single config entry exposes GPUs to every project's sandbox.
+func TestResolve_GPUs_DefaultBlock(t *testing.T) {
+	path := writeCfg(t, `{"default": {"gpus": "all"}}`)
+	got := Resolve(path, "/anywhere", Effective{})
+
+	if got.GPUs != "all" {
+		t.Fatalf("GPUs = %q, want %q", got.GPUs, "all")
+	}
+}
+
+// A project-level gpus entry must override the default — same precedence as
+// memory/cpus/image.
+func TestResolve_GPUs_ProjectOverridesDefault(t *testing.T) {
+	path := writeCfg(t, `{
+		"default":  {"gpus": "all"},
+		"projects": {"/work/foo": {"gpus": "device=0"}}
+	}`)
+	got := Resolve(path, "/work/foo", Effective{})
+
+	if got.GPUs != "device=0" {
+		t.Fatalf("GPUs = %q, want %q", got.GPUs, "device=0")
+	}
+}
+
+// An empty/absent gpus must leave the base value untouched (so AISB_GPUS or the
+// no-GPU default survives a config that doesn't mention gpus).
+func TestResolve_GPUs_AbsentKeepsBase(t *testing.T) {
+	path := writeCfg(t, `{"default": {"memory": "8g"}}`)
+	got := Resolve(path, "/anywhere", Effective{GPUs: "all"})
+
+	if got.GPUs != "all" {
+		t.Fatalf("GPUs = %q, want %q (base must survive)", got.GPUs, "all")
+	}
+}
+
 // Project-keyed mounts count too — fallback must not fire when only the
 // project entry supplies mounts.
 func TestResolve_ProjectOnlyMounts_NoFallback(t *testing.T) {
@@ -67,6 +103,48 @@ func TestResolve_ProjectOnlyMounts_NoFallback(t *testing.T) {
 	want := []string{"/work/foo/src"}
 	if !reflect.DeepEqual(got.Mounts, want) {
 		t.Fatalf("Mounts = %#v, want %#v", got.Mounts, want)
+	}
+}
+
+// Copies set on both the default and project level must be merged into
+// Effective.Copies in the same way mounts are.
+func TestResolve_CopiesMerged(t *testing.T) {
+	path := writeCfg(t, `{
+		"default":  {"copies": ["{{HOME}}/.cache/pip"]},
+		"projects": {"/work/foo": {"extra_copies": ["{{HOME}}/.npm"]}}
+	}`)
+	got := Resolve(path, "/work/foo", Effective{Memory: "4g", CPUs: "2"})
+
+	if len(got.Copies) != 2 {
+		t.Fatalf("Copies = %#v, want 2 entries", got.Copies)
+	}
+	if got.Copies[0] != "{{HOME}}/.cache/pip" {
+		t.Errorf("Copies[0] = %q, want %q", got.Copies[0], "{{HOME}}/.cache/pip")
+	}
+	if got.Copies[1] != "{{HOME}}/.npm" {
+		t.Errorf("Copies[1] = %q, want %q", got.Copies[1], "{{HOME}}/.npm")
+	}
+}
+
+// ExtraCopies must be appended to the Copies list after regular copies, in
+// the same way ExtraMounts are appended to Mounts.
+func TestResolve_ExtraCopiesAppended(t *testing.T) {
+	path := writeCfg(t, `{
+		"default": {
+			"copies": ["~/.cache/pip"],
+			"extra_copies": ["~/.npm"]
+		}
+	}`)
+	got := Resolve(path, "/anywhere", Effective{Memory: "4g", CPUs: "2"})
+
+	if len(got.Copies) != 2 {
+		t.Fatalf("Copies = %#v, want 2 entries", got.Copies)
+	}
+	if got.Copies[0] != "~/.cache/pip" {
+		t.Errorf("Copies[0] = %q, want %q", got.Copies[0], "~/.cache/pip")
+	}
+	if got.Copies[1] != "~/.npm" {
+		t.Errorf("Copies[1] = %q, want %q", got.Copies[1], "~/.npm")
 	}
 }
 

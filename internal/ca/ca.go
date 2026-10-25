@@ -1,4 +1,4 @@
-// Package ca generates the root CA psb uses to MITM allowlisted hosts.
+// Package ca generates the root CA aisb uses to MITM allowlisted hosts.
 // The public cert is mounted read-only into sandboxes; the private key
 // stays on the host and is piped to the proxy container over stdin.
 package ca

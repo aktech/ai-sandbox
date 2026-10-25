@@ -4,22 +4,22 @@
 [![image](https://github.com/aktech/ai-sandbox/actions/workflows/image.yml/badge.svg)](https://github.com/aktech/ai-sandbox/actions/workflows/image.yml)
 [![release](https://github.com/aktech/ai-sandbox/actions/workflows/release.yml/badge.svg)](https://github.com/aktech/ai-sandbox/actions/workflows/release.yml)
 
-Run AI coding agents (Claude Code, pi, etc.) in a Docker container instead
+Run AI coding agents (Claude Code, Codex, pi, etc.) in a Docker container instead
 of directly on your laptop. Each project gets its own container, and the
 container can only see the folders you explicitly mount in. If the agent
 goes wrong, you lose the container — not your home directory.
 
-The CLI is called `psb`. One command spins up (or re-enters) a sandbox
-for the current project and drops you into a shell where `claude` and
-`pi` are already installed.
+The CLI is called `aisb`. One command spins up (or re-enters) a sandbox
+for the current project and drops you into a shell where `claude`,
+`codex`, and `pi` are already installed.
 
 ![architecture](docs/architecture.svg)
 
 ## Install
 
 ```sh
-make build       # builds ./bin/psb — put it on your $PATH
-psb build        # builds the Docker image (one-time, ~5 min)
+make build       # builds ./bin/aisb — put it on your $PATH
+aisb build       # builds the Docker image (one-time, ~5 min)
 ```
 
 You need Docker running. On macOS, [colima](https://github.com/abiosoft/colima)
@@ -29,20 +29,20 @@ works well (`colima start`).
 
 ```sh
 cd ~/dev/my-project
-psb              # first run: creates a container, drops you into zsh
+aisb             # first run: creates a container, drops you into zsh
                  # next runs: re-enters the same container
 ```
 
-Inside the container, run `claude` or `pi` like you normally would.
+Inside the container, run `claude`, `codex`, or `pi` like you normally would.
 
 | Command          | What it does                                  |
 |------------------|-----------------------------------------------|
-| `psb`            | Enter the sandbox for the current project.    |
-| `psb stop`       | Stop the current project's container.         |
-| `psb rm`         | Delete the current project's container.       |
-| `psb ls`         | List all sandboxes.                           |
-| `psb status`     | Show one container's status.                  |
-| `psb build`      | Rebuild the image.                            |
+| `aisb`           | Enter the sandbox for the current project.    |
+| `aisb stop`      | Stop the current project's container.         |
+| `aisb rm`        | Delete the current project's container.       |
+| `aisb ls`        | List all sandboxes.                           |
+| `aisb status`    | Show one container's status.                  |
+| `aisb build`     | Rebuild the image.                            |
 
 ## What gets mounted
 
@@ -66,6 +66,7 @@ list in a config file:
       "extra_mounts": ["~/dev/shared-lib"],
       "memory": "8g",
       "cpus": 4,
+      "gpus": "all",
       "ports": ["3000:3000", "8000:8000"]
     }
   }
@@ -77,7 +78,12 @@ list in a config file:
   `src:dest` to mount it at a different path (e.g. a repo-local gitconfig
   at `~/.gitconfig` inside the sandbox).
 - `extra_mounts` — appended to `mounts`. Use for per-project additions.
-- `memory`, `cpus`, `image` — optional per-project overrides.
+- `memory`, `cpus`, `gpus`, `image` — optional overrides. Set them under
+  `default` to apply everywhere, or under a project to scope them.
+- `gpus` — passed straight to `docker run --gpus` (`"all"`, `"device=0,1"`,
+  or a count like `"2"`). Omit it (the default) for no GPU. Requires the
+  [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+  on a Linux host with NVIDIA drivers — it does **not** work under colima/macOS.
 - `ports` — each entry becomes a `-p host:container` publish, so a server
   you start inside the sandbox is reachable from your laptop browser. With
   `"3000:3000"`, a dev server on `:3000` inside shows up at
@@ -88,8 +94,8 @@ publish is shared: if two projects map to the same host port (e.g. both
 `"3000:3000"`), only the first container binds and the second fails with
 `port is already allocated`. Give each project a distinct host port for
 the same container port: `"3001:3000"`, `"3002:3000"`, and so on. Ports are
-fixed when the container is created, so changing them needs `psb rm`
-followed by `psb`.
+fixed when the container is created, so changing them needs `aisb rm`
+followed by `aisb`.
 
 Placeholders: `{{HOME}}`, `{{CWD}}`, `{{SHARED_DIR}}`. Shell-style `~/`
 and `$VAR` also work, on both sides of a `src:dest` entry. Paths that
@@ -97,20 +103,21 @@ don't exist on the host are skipped with a warning.
 
 ## Environment overrides
 
-| Var                | Default                              |
+| Var                 | Default                              |
 |--------------------|--------------------------------------|
-| `PSB_IMAGE_NAME`   | `ai-sandbox-pi:latest`               |
-| `PSB_MEMORY`       | `4g`                                 |
-| `PSB_CPUS`         | `2`                                  |
-| `PSB_SHARED_DIR`   | `~/sb-shared`                        |
-| `PSB_CONFIG_FILE`  | `~/.config/ai-sandbox/config.json`   |
-| `ANTHROPIC_API_KEY`| passed through to the container      |
-| `PSB_PROXY_IMAGE`  | `ai-sandbox-proxy:latest`            |
-| `PSB_MASTER_PASSWORD` | unlocks the secret store non-interactively |
+| `AISB_IMAGE_NAME`   | `ai-sandbox-pi:latest`               |
+| `AISB_MEMORY`       | `4g`                                 |
+| `AISB_CPUS`         | `2`                                  |
+| `AISB_GPUS`         | none (e.g. `all` to expose all GPUs) |
+| `AISB_SHARED_DIR`   | `~/sb-shared`                        |
+| `AISB_CONFIG_FILE`  | `~/.config/ai-sandbox/config.json`   |
+| `ANTHROPIC_API_KEY` | passed through to the container      |
+| `AISB_PROXY_IMAGE`  | `ai-sandbox-proxy:latest`            |
+| `AISB_MASTER_PASSWORD` | unlocks the secret store non-interactively |
 
 ## Keeping credentials out of the sandbox
 
-By default `psb` passes your `ANTHROPIC_API_KEY` straight into the container.
+By default `aisb` passes your `ANTHROPIC_API_KEY` straight into the container.
 That means a misbehaving agent can read it. The optional credential proxy
 removes every real secret from the sandbox: the agent sees only placeholder
 values, and a separate proxy on your machine swaps in the real secret as each
@@ -120,13 +127,13 @@ How it works:
 
 - Real secrets live in an encrypted file on your host
   (`~/.config/ai-sandbox/secrets.enc`), unlocked with a master password.
-- A small `psb-proxy` container holds the decrypted secrets in memory (they
+- A small `aisb-proxy` container holds the decrypted secrets in memory (they
   are handed to it over a pipe, never written to disk or passed as env/args).
 - Each sandbox runs on its own private Docker network that has **no route to
   the internet**. The proxy is the only way out, so the domain allowlist is
   enforced by the network itself, not by the agent's good behavior.
 - Inside the sandbox, the env var you name in `proxy.env` (e.g. `GH_TOKEN`) is
-  set to a sentinel like `__psb_<secret>__`. When the agent calls an
+  set to a sentinel like `__aisb_<secret>__`. When the agent calls an
   allowlisted host that has an inject rule, the proxy replaces the sentinel in
   the header with the real secret. The agent never holds the key. Which secret
   goes in which env var and which header is entirely config-driven; nothing is
@@ -135,10 +142,10 @@ How it works:
 Set it up once (the secret names below are arbitrary labels you choose):
 
 ```sh
-psb build                      # if you haven't already
+aisb build                      # if you haven't already
 make proxy-image               # build the proxy container (one-time)
-psb proxy init                 # generate the CA + empty secret store
-printf '%s' "$SOME_API_KEY" | psb secret set <name>
+aisb proxy init                 # generate the CA + empty secret store
+printf '%s' "$SOME_API_KEY" | aisb secret set <name>
 ```
 
 Then add a `proxy` block to your config:
@@ -190,19 +197,19 @@ project's rules are isolated from the others.
 
 Rules update live: entering a project pushes its allowlist to the running proxy
 (no master password needed, since rule updates carry no secrets). Removing a
-sandbox (`psb rm`) drops that project's rules.
+sandbox (`aisb rm`) drops that project's rules.
 
-Once a `proxy` block is present, `psb` starts the proxy and the private
-network automatically. With no `proxy` block, `psb` behaves exactly as before.
+Once a `proxy` block is present, `aisb` starts the proxy and the private
+network automatically. With no `proxy` block, `aisb` behaves exactly as before.
 
 | Command            | What it does                                   |
 |--------------------|------------------------------------------------|
-| `psb proxy init`   | Generate the CA and an empty secret store.     |
-| `psb secret set X` | Store a secret (value read from stdin/no-echo).|
-| `psb secret ls`    | List stored secret names (never values).       |
-| `psb secret rm X`  | Remove a secret.                               |
-| `psb proxy stop`   | Stop the shared proxy container.               |
-| `psb proxy log`    | Stream the proxy's allow/deny decisions.       |
+| `aisb proxy init`   | Generate the CA and an empty secret store.     |
+| `aisb secret set X` | Store a secret (value read from stdin/no-echo).|
+| `aisb secret ls`    | List stored secret names (never values).       |
+| `aisb secret rm X`  | Remove a secret.                               |
+| `aisb proxy stop`   | Stop the shared proxy container.               |
+| `aisb proxy log`    | Stream the proxy's allow/deny decisions.       |
 
 Git over SSH (`git@github.com:...`) is out of scope for now: use HTTPS
 remotes so the proxy can inject your token. Projects that publish `ports`
@@ -211,6 +218,6 @@ mode do not yet combine.
 
 ## What's in the image
 
-Debian slim with `claude`, `pi`, Node, Go, `uv`, `pixi`, `git`, `zsh`.
+Debian slim with `claude`, `codex`, `pi`, Node, Go, `uv`, `pixi`, `git`, `zsh`.
 The container runs as a non-root user whose UID/GID matches your host,
 so files you create inside stay writable from outside.

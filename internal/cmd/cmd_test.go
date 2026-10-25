@@ -26,7 +26,7 @@ func TestBuildSpec_NoProxy_PassesRealKey(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "real-key")
 	c := cfg.Effective{Image: "img", Memory: "4g", CPUs: "2", SharedDir: "/sh",
 		Mounts: []string{"/work"}}
-	spec := buildSpec("psb-foo", c, "/home/u", "/work", nil, "", noopWarner{})
+	spec := buildSpec("aisb-foo", c, "/home/u", "/work", nil, "", noopWarner{})
 
 	if spec.Env["ANTHROPIC_API_KEY"] != "real-key" {
 		t.Fatalf("no-proxy must pass real key, got %q", spec.Env["ANTHROPIC_API_KEY"])
@@ -36,6 +36,20 @@ func TestBuildSpec_NoProxy_PassesRealKey(t *testing.T) {
 	}
 	if spec.Env["HTTPS_PROXY"] != "" {
 		t.Fatalf("no-proxy must not set HTTPS_PROXY, got %q", spec.Env["HTTPS_PROXY"])
+	}
+}
+
+// The configured gpus value must reach the container spec so `docker run`
+// gets --gpus, in both plain and proxy mode.
+func TestBuildSpec_PassesGPUs(t *testing.T) {
+	for _, proxy := range []*cfg.ProxyBlock{nil, {Allow: []string{"example.com"}}} {
+		c := cfg.Effective{Image: "img", Memory: "4g", CPUs: "2", GPUs: "all",
+			SharedDir: "/sh", Proxy: proxy}
+		spec := buildSpec("aisb-foo", c, "/home/u", "/work", nil, "/host/ca.crt", noopWarner{})
+
+		if spec.GPUs != "all" {
+			t.Fatalf("proxy=%v: GPUs = %q, want %q", proxy != nil, spec.GPUs, "all")
+		}
 	}
 }
 
@@ -51,17 +65,17 @@ func TestBuildSpec_Proxy_UsesSentinelAndInternalNet(t *testing.T) {
 			Env:    map[string]string{"anthropic": "ANTHROPIC_API_KEY", "custom": "MY_CUSTOM_TOKEN"},
 			Inject: rawInject(`{"api.anthropic.com":{"header":"x-api-key","secret":"anthropic"}}`),
 		}}
-	spec := buildSpec("psb-foo", c, "/home/u", "/work", nil, "/host/ca.crt", noopWarner{})
+	spec := buildSpec("aisb-foo", c, "/home/u", "/work", nil, "/host/ca.crt", noopWarner{})
 
-	if spec.Env["ANTHROPIC_API_KEY"] != "__psb_anthropic__" {
+	if spec.Env["ANTHROPIC_API_KEY"] != "__aisb_anthropic__" {
 		t.Fatalf("proxy must use sentinel, got %q", spec.Env["ANTHROPIC_API_KEY"])
 	}
 	// A wholly custom secret name maps to its declared env var, no hardcoding.
-	if spec.Env["MY_CUSTOM_TOKEN"] != "__psb_custom__" {
-		t.Fatalf("custom secret sentinel = %q, want __psb_custom__", spec.Env["MY_CUSTOM_TOKEN"])
+	if spec.Env["MY_CUSTOM_TOKEN"] != "__aisb_custom__" {
+		t.Fatalf("custom secret sentinel = %q, want __aisb_custom__", spec.Env["MY_CUSTOM_TOKEN"])
 	}
-	if spec.Network != "psb-net-foo" {
-		t.Fatalf("Network = %q, want psb-net-foo", spec.Network)
+	if spec.Network != "aisb-net-foo" {
+		t.Fatalf("Network = %q, want aisb-net-foo", spec.Network)
 	}
 	if spec.Env["HTTPS_PROXY"] == "" {
 		t.Fatal("HTTPS_PROXY must be set under proxy mode")

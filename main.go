@@ -1,4 +1,4 @@
-// psb — launch a Docker (colima) sandbox per project. Image bundles `pi`
+// aisb — launch a Docker (colima) sandbox per project. Image bundles `pi`
 // and `claude`; pick whichever you need from inside the shell.
 //
 // Per-project overrides via ~/.config/ai-sandbox/config.json:
@@ -34,7 +34,7 @@ import (
 	"github.com/aktech/ai-sandbox/internal/dx"
 )
 
-// labelFlags collects repeated -label k=v values for `psb create`.
+// labelFlags collects repeated -label k=v values for `aisb create`.
 type labelFlags []string
 
 func (l *labelFlags) String() string     { return strings.Join(*l, ",") }
@@ -62,7 +62,7 @@ func envDefault(key, def string) string {
 }
 
 func cfgPath() string {
-	return envDefault("PSB_CONFIG_FILE", filepath.Join(os.Getenv("HOME"), ".config", "ai-sandbox", "config.json"))
+	return envDefault("AISB_CONFIG_FILE", filepath.Join(os.Getenv("HOME"), ".config", "ai-sandbox", "config.json"))
 }
 
 // ---------- log helpers ----------
@@ -119,7 +119,7 @@ func containerName(prefix string) (string, error) {
 // ---------- build (kept here because it owns the embedded Dockerfile) ----------
 
 func cmdBuild(log *logger) error {
-	image := envDefault("PSB_IMAGE_NAME", "ai-sandbox-pi:latest")
+	image := envDefault("AISB_IMAGE_NAME", "ai-sandbox-pi:latest")
 	piVersion := envDefault("PI_VERSION", "v0.79.1")
 	uid := fmt.Sprintf("%d", os.Getuid())
 	gid := fmt.Sprintf("%d", os.Getgid())
@@ -128,7 +128,7 @@ func cmdBuild(log *logger) error {
 		return fmt.Errorf("HOME not set")
 	}
 
-	tmp, err := os.MkdirTemp("", "psb-build-*")
+	tmp, err := os.MkdirTemp("", "aisb-build-*")
 	if err != nil {
 		return fmt.Errorf("temp dir: %w", err)
 	}
@@ -173,21 +173,21 @@ func cmdBuild(log *logger) error {
 // ---------- main ----------
 
 func usage() {
-	fmt.Println(`psb — launch a Docker sandbox per project. Image bundles pi + claude.
+	fmt.Println(`aisb — launch a Docker sandbox per project. Image bundles pi + claude.
 
 Usage:
-  psb              create or attach + shell into psb-<project>
-  psb stop         stop the project's container
-  psb rm [n...]    destroy current container, or named ones
-  psb status       show container status
-  psb ls           list all psb-* containers
-  psb build        (re)build the image
-  psb proxy init   generate the egress-proxy CA + secret store
-  psb proxy stop   stop the shared credential proxy
-  psb proxy log    stream the proxy's allow/deny log
-  psb secret set <name>   store a secret (no echo)
-  psb secret rm  <name>   remove a secret
-  psb secret ls           list stored secret names
+  aisb             create or attach + shell into aisb-<project>
+  aisb stop        stop the project's container
+  aisb rm [n...]   destroy current container, or named ones
+  aisb status      show container status
+  aisb ls          list all aisb-* containers
+  aisb build       (re)build the image
+  aisb proxy init  generate the egress-proxy CA + secret store
+  aisb proxy stop  stop the shared credential proxy
+  aisb proxy log   stream the proxy's allow/deny log
+  aisb secret set <name>  store a secret (no echo)
+  aisb secret rm  <name>  remove a secret
+  aisb secret ls          list stored secret names
 
 Config file (JSON):
   ` + filepath.Join(os.Getenv("HOME"), ".config/ai-sandbox/config.json") + `
@@ -196,24 +196,41 @@ Config file (JSON):
     mounts         declarative mount list; each entry is "src" or "src:dest"
     extra_mounts   appended after mounts
     memory / cpus  resource limits
+    gpus           docker --gpus value: "all", "device=0,1", "2" (needs NVIDIA Container Toolkit)
     image          custom image tag
 
   Template vars in mounts: {{HOME}}, {{SHARED_DIR}}, {{CWD}}
   Also supports ~/ and $ENV_VAR expansion.
 
 Env vars (override config defaults):
-  PSB_IMAGE_NAME   image tag (default: ai-sandbox-pi:latest)
-  PSB_MEMORY       memory limit (default: 4g)
-  PSB_CPUS         cpu limit (default: 2)
-  PSB_SHARED_DIR   host↔container exchange dir (default: ~/sb-shared)
-  PSB_CONFIG_FILE  config file path (default: ~/.config/ai-sandbox/config.json)
-  HOMELAB_URL      passed through to container
+  AISB_IMAGE_NAME   image tag (default: ai-sandbox-pi:latest)
+  AISB_MEMORY       memory limit (default: 4g)
+  AISB_CPUS         cpu limit (default: 2)
+  AISB_GPUS         expose GPUs, e.g. all (default: none; needs NVIDIA Container Toolkit)
+  AISB_SHARED_DIR   host↔container exchange dir (default: ~/sb-shared)
+  AISB_CONFIG_FILE  config file path (default: ~/.config/ai-sandbox/config.json)
+  HOMELAB_URL       passed through to container
   ANTHROPIC_API_KEY passed through to container (claude API auth)`)
 }
 
 func main() {
-	log := newLogger("psb")
-	h := cmd.Handler{Log: log, Docker: dx.Cmd{}}
+	log := newLogger("aisb")
+
+	// Filter out --wait-copies before the subcommand switch so it works
+	// both as "aisb --wait-copies" and "aisb up --wait-copies".
+	waitCopies := false
+	filtered := make([]string, 0, len(os.Args))
+	filtered = append(filtered, os.Args[0])
+	for _, arg := range os.Args[1:] {
+		if arg == "--wait-copies" {
+			waitCopies = true
+		} else {
+			filtered = append(filtered, arg)
+		}
+	}
+	os.Args = filtered
+
+	h := cmd.Handler{Log: log, Docker: dx.Cmd{}, WaitCopies: waitCopies}
 
 	if _, err := exec.LookPath("docker"); err != nil {
 		log.Die("docker not found — install or `colima start`", 1)
@@ -229,14 +246,15 @@ func main() {
 	}
 
 	base := cfg.Effective{
-		Image:     envDefault("PSB_IMAGE_NAME", "ai-sandbox-pi:latest"),
-		Memory:    envDefault("PSB_MEMORY", "4g"),
-		CPUs:      envDefault("PSB_CPUS", "2"),
-		SharedDir: envDefault("PSB_SHARED_DIR", filepath.Join(home, "sb-shared")),
+		Image:     envDefault("AISB_IMAGE_NAME", "ai-sandbox-pi:latest"),
+		Memory:    envDefault("AISB_MEMORY", "4g"),
+		CPUs:      envDefault("AISB_CPUS", "2"),
+		GPUs:      envDefault("AISB_GPUS", ""), // empty = no GPU; "all" or "device=0,1" to expose
+		SharedDir: envDefault("AISB_SHARED_DIR", filepath.Join(home, "sb-shared")),
 	}
 	c := cfg.Resolve(cfgPath(), cwd, base)
 
-	name, err := containerName("psb")
+	name, err := containerName("aisb")
 	if err != nil {
 		log.Die("container name: "+err.Error(), 1)
 	}
@@ -257,10 +275,10 @@ func main() {
 		dieOn(h.Up(name, c, home, cwd))
 	case "create":
 		// Non-interactive: prepare a sandbox (all configured mounts) and print
-		// its name. Lets other tools (e.g. darb) reuse psb's sandbox.
+		// its name. Lets other tools (e.g. darb) reuse aisb's sandbox.
 		fs := flag.NewFlagSet("create", flag.ExitOnError)
 		workdir := fs.String("workdir", cwd, "project directory to sandbox")
-		nameOverride := fs.String("name", "", "container name (default: psb-<dir>)")
+		nameOverride := fs.String("name", "", "container name (default: aisb-<dir>)")
 		origin := fs.String("origin", "", "path matched against the projects config "+
 			"(default: workdir). Lets a caller running in a throwaway clone route by the real source folder.")
 		var labels labelFlags
@@ -285,14 +303,14 @@ func main() {
 		cc := cfg.Resolve(cfgPath(), matchPath, base)
 		nm := *nameOverride
 		if nm == "" {
-			nm = "psb-" + sanitizeName(filepath.Base(wd))
+			nm = "aisb-" + sanitizeName(filepath.Base(wd))
 		}
 		dieOn(h.Create(nm, cc, home, wd, labels.toMap()))
 	case "stop":
 		dieOn(h.Stop(name))
 	case "rm", "remove":
-		// `psb rm`            → current project's container
-		// `psb rm name [...]` → explicit list of psb-* containers
+		// `aisb rm`            → current project's container
+		// `aisb rm name [...]` → explicit list of aisb-* containers
 		targets := []string{name}
 		if len(os.Args) > 2 {
 			targets = os.Args[2:]
@@ -307,10 +325,10 @@ func main() {
 	case "build":
 		dieOn(cmdBuild(log))
 	case "secret":
-		// psb secret set|rm|ls <name>
+		// aisb secret set|rm|ls <name>
 		dieOn(dispatchSecret(h, os.Args[2:]))
 	case "proxy":
-		// psb proxy init|stop|log
+		// aisb proxy init|stop|log
 		dieOn(dispatchProxy(h, os.Args[2:]))
 	case "-h", "--help", "help":
 		usage()
@@ -319,56 +337,56 @@ func main() {
 	}
 }
 
-const secretHelp = `psb secret - manage the encrypted secret store
+const secretHelp = `aisb secret - manage the encrypted secret store
 
 Secrets are kept in an encrypted file on the host (~/.config/ai-sandbox/secrets.enc),
 unlocked with your master password. Sandboxes never see the real values, only
 sentinels that the proxy swaps for the real secret on the way out.
 
 Usage:
-  psb secret set <name>    store/replace a secret named <name>
-  psb secret rm  <name>    remove a secret
-  psb secret ls            list stored secret names (never values)
+  aisb secret set <name>  store/replace a secret named <name>
+  aisb secret rm  <name>  remove a secret
+  aisb secret ls          list stored secret names (never values)
 
 The value for 'set' is read from stdin (pipe it, or paste at the masked prompt),
 never from an argument, so it can't leak via shell history or the process list.
 
 Examples:
-  printf '%s' "$GITHUB_TOKEN" | psb secret set github
-  psb secret set openai < token.txt
-  psb secret set github            # prompts: master password, then the value
-  psb secret ls
-  psb secret rm openai
+  printf '%s' "$GITHUB_TOKEN" | aisb secret set github
+  aisb secret set openai < token.txt
+  aisb secret set github  # prompts: master password, then the value
+  aisb secret ls
+  aisb secret rm openai
 
 Notes:
   - <name> must match the "secret" field in your proxy.inject rules and the
     proxy.env map in config.json.
-  - Set PSB_MASTER_PASSWORD to avoid the master-password prompt.
-  - The proxy loads secrets once at startup; run 'psb proxy stop' then re-enter
+  - Set AISB_MASTER_PASSWORD to avoid the master-password prompt.
+  - The proxy loads secrets once at startup; run 'aisb proxy stop' then re-enter
     a sandbox so a new/changed secret takes effect.`
 
-const proxyHelp = `psb proxy - manage the credential-injecting egress proxy
+const proxyHelp = `aisb proxy - manage the credential-injecting egress proxy
 
 The proxy is one container that every sandbox routes through. It holds the real
 secrets in memory, injects them into allowed requests, and enforces a per-project
 domain allowlist. Sandboxes sit on a private network whose only exit is the proxy.
 
 Usage:
-  psb proxy init    generate the CA + an empty secret store (run once)
-  psb proxy stop    stop the shared proxy container
-  psb proxy log     stream the proxy's live ALLOW / DENY decisions
+  aisb proxy init  generate the CA + an empty secret store (run once)
+  aisb proxy stop  stop the shared proxy container
+  aisb proxy log   stream the proxy's live ALLOW / DENY decisions
 
 Examples:
-  psb proxy init                   # first-time setup; sets the master password
-  psb proxy log                    # watch traffic decisions
-  psb proxy stop                   # then re-enter a sandbox to reload secrets/rules
+  aisb proxy init  # first-time setup; sets the master password
+  aisb proxy log  # watch traffic decisions
+  aisb proxy stop  # then re-enter a sandbox to reload secrets/rules
 
 Notes:
   - 'init' will not overwrite an existing CA (so already-shared certs stay valid).
   - Egress rules live under the "proxy" block in config.json (allow / extra_allow,
     "*" for unrestricted, [] for a full airgap; inject + env declare secret use).`
 
-// dispatchSecret routes `psb secret <action> [name]`.
+// dispatchSecret routes `aisb secret <action> [name]`.
 func dispatchSecret(h cmd.Handler, args []string) error {
 	if len(args) == 0 || isHelp(args[0]) {
 		os.Stdout.WriteString(secretHelp + "\n")
@@ -377,22 +395,22 @@ func dispatchSecret(h cmd.Handler, args []string) error {
 	switch args[0] {
 	case "set":
 		if len(args) < 2 {
-			return fmt.Errorf("usage: psb secret set <name>\n(run `psb secret` for help)")
+			return fmt.Errorf("usage: aisb secret set <name>\n(run `aisb secret` for help)")
 		}
 		return h.SecretSet(args[1])
 	case "rm":
 		if len(args) < 2 {
-			return fmt.Errorf("usage: psb secret rm <name>\n(run `psb secret` for help)")
+			return fmt.Errorf("usage: aisb secret rm <name>\n(run `aisb secret` for help)")
 		}
 		return h.SecretRM(args[1])
 	case "ls":
 		return h.SecretLS()
 	default:
-		return fmt.Errorf("unknown secret action %q (use: set | rm | ls; `psb secret` for help)", args[0])
+		return fmt.Errorf("unknown secret action %q (use: set | rm | ls; `aisb secret` for help)", args[0])
 	}
 }
 
-// dispatchProxy routes `psb proxy <action>`.
+// dispatchProxy routes `aisb proxy <action>`.
 func dispatchProxy(h cmd.Handler, args []string) error {
 	if len(args) == 0 || isHelp(args[0]) {
 		os.Stdout.WriteString(proxyHelp + "\n")
@@ -406,7 +424,7 @@ func dispatchProxy(h cmd.Handler, args []string) error {
 	case "log", "logs":
 		return h.ProxyLog()
 	default:
-		return fmt.Errorf("unknown proxy action %q (use: init | stop | log; `psb proxy` for help)", args[0])
+		return fmt.Errorf("unknown proxy action %q (use: init | stop | log; `aisb proxy` for help)", args[0])
 	}
 }
 

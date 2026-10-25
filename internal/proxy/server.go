@@ -93,7 +93,7 @@ func New(secrets map[string]string, caCertPEM, caKeyPEM []byte) (*Server, error)
 				s.log.Info("request", "decision", "deny", "method", req.Method,
 					"host", req.URL.Host, "src", req.RemoteAddr)
 				return req, goproxy.NewResponse(req, goproxy.ContentTypeText,
-					http.StatusForbidden, "psb-proxy: host not in allowlist\n")
+					http.StatusForbidden, "aisb-proxy: host not in allowlist\n")
 			}
 		}
 		NewInjector(c.injectRules(), s.secrets).Apply(req)

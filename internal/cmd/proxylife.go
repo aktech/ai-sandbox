@@ -11,11 +11,11 @@ import (
 	"github.com/aktech/ai-sandbox/internal/proxy"
 )
 
-const proxyContainer = "psb-proxy"
+const proxyContainer = "aisb-proxy"
 
 // proxyImage returns the proxy container image, overridable for testing/CI.
 func proxyImage() string {
-	if v := os.Getenv("PSB_PROXY_IMAGE"); v != "" {
+	if v := os.Getenv("AISB_PROXY_IMAGE"); v != "" {
 		return v
 	}
 	return "ai-sandbox-proxy:latest"
@@ -23,36 +23,36 @@ func proxyImage() string {
 
 // networkName maps a sandbox container name to its private network name.
 func networkName(container string) string {
-	return "psb-net-" + strings.TrimPrefix(container, "psb-")
+	return "aisb-net-" + strings.TrimPrefix(container, "aisb-")
 }
 
 // proxyRunArgs builds `docker run -d` argv for the proxy container. It sits on
 // the default bridge (egress to the internet) and is later attached to each
 // sandbox's internal network with `docker network connect`. The tmpfs at
-// /run/psb holds the decrypted payload in RAM only; it never reaches disk.
+// /run/aisb holds the decrypted payload in RAM only; it never reaches disk.
 func proxyRunArgs(name, image string) []string {
 	return []string{"run", "-d", "--name", name, "--network", "bridge",
-		"--tmpfs", "/run/psb:rw,mode=1777,size=1m", image}
+		"--tmpfs", "/run/aisb:rw,mode=1777,size=1m", image}
 }
 
 // writePayloadExecArgs builds argv to deliver the secrets payload to a running
 // proxy via stdin. The proxy's --write-payload mode copies stdin to the tmpfs
 // file that its serving process reads once at startup.
 func writePayloadExecArgs(name string) []string {
-	return []string{"exec", "-i", name, "/psb-proxy", "--write-payload"}
+	return []string{"exec", "-i", name, "/aisb-proxy", "--write-payload"}
 }
 
 // writeRulesExecArgs builds argv to deliver one project's rule file (no
 // secrets) to a running proxy via stdin. key names the per-project file, so
-// concurrent psb runs never clobber each other's rules.
+// concurrent aisb runs never clobber each other's rules.
 func writeRulesExecArgs(proxyName, key string) []string {
-	return []string{"exec", "-i", proxyName, "/psb-proxy", "--write-rules", key}
+	return []string{"exec", "-i", proxyName, "/aisb-proxy", "--write-rules", key}
 }
 
 // rmRulesExecArgs builds argv to drop a project's rule file when its sandbox is
 // removed, so the proxy stops carrying that subnet's allowances.
 func rmRulesExecArgs(proxyName, key string) []string {
-	return []string{"exec", proxyName, "/psb-proxy", "--rm-rules", key}
+	return []string{"exec", proxyName, "/aisb-proxy", "--rm-rules", key}
 }
 
 // networkSubnet returns the CIDR of a docker network, e.g. "172.20.0.0/16".

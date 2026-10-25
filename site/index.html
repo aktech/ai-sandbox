@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>ai-sandbox · run AI coding agents in a box, not on your laptop</title>
-<meta name="description" content="psb spins up a disposable Docker sandbox per project for Claude Code, pi, and other AI coding agents. The agent only sees the folders you mount. If it goes wrong, you lose the container, not your home directory." />
+<meta name="description" content="aisb spins up a disposable Docker sandbox per project for Claude Code, pi, and other AI coding agents. The agent only sees the folders you mount. If it goes wrong, you lose the container, not your home directory." />
 <meta property="og:title" content="ai-sandbox" />
 <meta property="og:description" content="Run AI coding agents in a disposable Docker sandbox. The agent sees only what you mount." />
 <meta property="og:type" content="website" />
@@ -270,9 +270,9 @@
 
   <header id="top">
     <div class="wrap">
-      <div class="tag reveal"><span class="dot"></span> psb · the per-project agent sandbox</div>
+      <div class="tag reveal"><span class="dot"></span> aisb · the per-project agent sandbox</div>
       <h1 class="reveal">Run AI agents in a <span class="hl">box</span>,<br />not on your <span class="strike">laptop</span>.</h1>
-      <p class="lede reveal">Claude Code, pi, and friends are powerful and occasionally reckless. <b>psb</b> drops each one into its own disposable Docker container that can only see the folders you mount in. If the agent goes off the rails, you lose the container, not your home directory.</p>
+      <p class="lede reveal">Claude Code, pi, and friends are powerful and occasionally reckless. <b>aisb</b> drops each one into its own disposable Docker container that can only see the folders you mount in. If the agent goes off the rails, you lose the container, not your home directory.</p>
       <div class="cta-row reveal">
         <a class="btn btn-primary" href="#install">$ get started</a>
         <a class="btn btn-ghost" href="https://github.com/aktech/ai-sandbox" target="_blank" rel="noopener">View source ↗</a>
@@ -305,11 +305,11 @@
           </ul>
         </div>
         <div class="pane good reveal">
-          <h3>◆ agent in psb</h3>
+          <h3>◆ agent in aisb</h3>
           <ul>
             <li>Sees <b>only the paths you explicitly mount</b></li>
             <li>Secrets stay out unless you opt them in</li>
-            <li>Worst case: <code style="color:var(--cyan)">psb rm</code> and the mess is <b>gone</b></li>
+            <li>Worst case: <code style="color:var(--cyan)">aisb rm</code> and the mess is <b>gone</b></li>
             <li>Tools live in the image, not your machine</li>
             <li>One container per project, fully isolated</li>
           </ul>
@@ -324,9 +324,9 @@
       <h2 class="reveal">Isolation that stays out of your way.</h2>
       <p class="sub reveal">One command spins up (or re-enters) a sandbox for the current project and drops you into a shell where the agents are already installed.</p>
       <div class="grid">
-        <div class="card reveal"><div class="ico">[ ]</div><h3>One box per project</h3><p>Each directory gets its own named container. Re-running <code>psb</code> re-enters the same one, so your session survives.</p></div>
+        <div class="card reveal"><div class="ico">[ ]</div><h3>One box per project</h3><p>Each directory gets its own named container. Re-running <code>aisb</code> re-enters the same one, so your session survives.</p></div>
         <div class="card reveal"><div class="ico">▤</div><h3>Explicit mounts only</h3><p>The container sees the project dir and nothing else, until you list more paths. Write <code>src</code> or <code>src:dest</code>.</p></div>
-        <div class="card reveal"><div class="ico">⌁</div><h3>Disposable by design</h3><p><code>psb rm</code> and the container is gone. No leftover state, no half-broken global environment to clean up.</p></div>
+        <div class="card reveal"><div class="ico">⌁</div><h3>Disposable by design</h3><p><code>aisb rm</code> and the container is gone. No leftover state, no half-broken global environment to clean up.</p></div>
         <div class="card reveal"><div class="ico">⚙</div><h3>Batteries included</h3><p>Debian slim with <code>claude</code>, <code>pi</code>, Node, Go, <code>uv</code>, <code>pixi</code>, <code>git</code>, and <code>zsh</code> baked into the image.</p></div>
         <div class="card reveal"><div class="ico">⟳</div><h3>Files stay yours</h3><p>The container runs as a non-root user whose UID/GID matches the host, so files it creates stay writable from outside.</p></div>
         <div class="card reveal"><div class="ico">⧉</div><h3>Persistent sessions</h3><p><code>tmux</code> ships in the image, so long-running agent runs keep going across re-entries and detaches.</p></div>
@@ -338,25 +338,25 @@
     <div class="wrap">
       <p class="eyebrow reveal">Three commands</p>
       <h2 class="reveal">From zero to sandboxed agent.</h2>
-      <p class="sub reveal">Build the binary, build the image once, then live in <code>psb</code>.</p>
+      <p class="sub reveal">Build the binary, build the image once, then live in <code>aisb</code>.</p>
       <div class="steps">
         <div class="step reveal">
           <div class="n">01 / build the CLI</div>
-          <h3>Get psb on your PATH</h3>
-          <p>Compile the Go binary into <code>./bin/psb</code> and put it somewhere on your path.</p>
+          <h3>Get aisb on your PATH</h3>
+          <p>Compile the Go binary into <code>./bin/aisb</code> and put it somewhere on your path.</p>
           <code class="line">make build</code>
         </div>
         <div class="step reveal">
           <div class="n">02 / build the image</div>
           <h3>One-time image build</h3>
           <p>Bake the Debian image with the agents and toolchain. Takes a few minutes, once.</p>
-          <code class="line">psb build <span class="c"># ~5 min</span></code>
+          <code class="line">aisb build <span class="c"># ~5 min</span></code>
         </div>
         <div class="step reveal">
           <div class="n">03 / enter</div>
           <h3>Drop into the sandbox</h3>
-          <p>From any project, run <code>psb</code> and start <code>claude</code> or <code>pi</code> as usual.</p>
-          <code class="line">cd ~/dev/my-project && psb</code>
+          <p>From any project, run <code>aisb</code> and start <code>claude</code> or <code>pi</code> as usual.</p>
+          <code class="line">cd ~/dev/my-project && aisb</code>
         </div>
       </div>
     </div>
@@ -368,13 +368,13 @@
       <h2 class="reveal">The command surface.</h2>
       <p class="sub reveal">Small on purpose. Everything is scoped to the project directory you run it from.</p>
       <div class="cmds reveal">
-        <div class="cmd-row"><div class="k">psb</div><div class="v">Enter the sandbox for the current project.</div></div>
-        <div class="cmd-row"><div class="k">psb create</div><div class="v">Create the container (mounts + labels) without opening a shell.</div></div>
-        <div class="cmd-row"><div class="k">psb stop</div><div class="v">Stop the current project's container.</div></div>
-        <div class="cmd-row"><div class="k">psb rm</div><div class="v">Delete the current project's container.</div></div>
-        <div class="cmd-row"><div class="k">psb ls</div><div class="v">List all sandboxes.</div></div>
-        <div class="cmd-row"><div class="k">psb status</div><div class="v">Show one container's status.</div></div>
-        <div class="cmd-row"><div class="k">psb build</div><div class="v">Rebuild the image.</div></div>
+        <div class="cmd-row"><div class="k">aisb</div><div class="v">Enter the sandbox for the current project.</div></div>
+        <div class="cmd-row"><div class="k">aisb create</div><div class="v">Create the container (mounts + labels) without opening a shell.</div></div>
+        <div class="cmd-row"><div class="k">aisb stop</div><div class="v">Stop the current project's container.</div></div>
+        <div class="cmd-row"><div class="k">aisb rm</div><div class="v">Delete the current project's container.</div></div>
+        <div class="cmd-row"><div class="k">aisb ls</div><div class="v">List all sandboxes.</div></div>
+        <div class="cmd-row"><div class="k">aisb status</div><div class="v">Show one container's status.</div></div>
+        <div class="cmd-row"><div class="k">aisb build</div><div class="v">Rebuild the image.</div></div>
       </div>
     </div>
   </section>
@@ -394,15 +394,15 @@
 <pre id="installCode"><span class="c"># 1. clone and build the CLI</span>
 git clone <span class="a">https://github.com/aktech/ai-sandbox</span>
 cd ai-sandbox
-make build              <span class="c"># produces ./bin/psb</span>
-cp bin/psb /usr/local/bin   <span class="c"># or anywhere on $PATH</span>
+make build              <span class="c"># produces ./bin/aisb</span>
+cp bin/aisb /usr/local/bin   <span class="c"># or anywhere on $PATH</span>
 
 <span class="c"># 2. build the image (one-time, ~5 min)</span>
-psb build
+aisb build
 
 <span class="c"># 3. sandbox any project</span>
 cd ~/dev/my-project
-<span class="g">psb</span>                    <span class="c"># drops you into zsh, claude + pi ready</span></pre>
+<span class="g">aisb</span>                   <span class="c"># drops you into zsh, claude + pi ready</span></pre>
         </div>
       </div>
       <p class="foot-note reveal">Mounts, per-project memory/CPU limits, and image overrides live in <code style="color:var(--cyan)">~/.config/ai-sandbox/config.json</code>. See the README for the full config.</p>
@@ -437,7 +437,7 @@ cd ~/dev/my-project
 <script>
   // ---- typed terminal demo ----
   const lines = [
-    { t: 600,  html: '<span class="prompt"><span class="usr">you</span> ~/dev/my-project</span> <span class="cmd">$ psb</span>' },
+    { t: 600,  html: '<span class="prompt"><span class="usr">you</span> ~/dev/my-project</span> <span class="cmd">$ aisb</span>' },
     { t: 420,  html: '<span class="out">→ no sandbox for this project yet, creating one…</span>' },
     { t: 360,  html: '<span class="out">→ image <span class="acc">ai-sandbox-pi:latest</span>  ·  mounts: <span class="acc">2</span></span>' },
     { t: 320,  html: '<span class="out">→ container <span class="ok">my-project-sbx</span> started <span class="ok">✓</span></span>' },

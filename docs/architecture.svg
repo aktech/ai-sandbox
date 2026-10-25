@@ -32,7 +32,7 @@
 
   <!-- Title + legend -->
   <text class="title" x="60" y="60" font-size="26">ai-sandbox</text>
-  <text class="cap" x="248" y="58" font-size="13.5">the CLI is <tspan font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-weight="700" fill="#1A1A1A">psb</tspan>, short for &#8220;pi sandbox&#8221;</text>
+  <text class="cap" x="248" y="58" font-size="13.5">the CLI is <tspan font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-weight="700" fill="#1A1A1A">aisb</tspan>, short for &#8220;AI sandbox&#8221;</text>
 
   <rect class="tile-blue" x="60" y="96" width="20" height="20" rx="6"/>
   <text class="leg" x="92" y="111" font-size="13">lives on your laptop</text>
@@ -44,7 +44,7 @@
   <text class="leg" x="92" y="166" font-size="13">data crossing the boundary: bind mounts, published ports</text>
 
   <line class="a-gray" x1="60" y1="190" x2="82" y2="190" marker-end="url(#ah-gray)"/>
-  <text class="leg" x="92" y="194" font-size="13">control: psb reads the config, creates and enters the container</text>
+  <text class="leg" x="92" y="194" font-size="13">control: aisb reads the config, creates and enters the container</text>
 
   <!-- Host group -->
   <rect class="group" x="60" y="220" width="400" height="500" rx="16"/>
@@ -71,9 +71,9 @@
     <text class="monocap" x="260" y="606" font-size="12" text-anchor="middle">localhost:3000</text>
   </g>
 
-  <!-- psb trapezoid -->
-  <path class="tile-green" d="M515 330 L685 330 L655 398 L545 398 Z"/>
-  <text class="mono" x="600" y="360" font-size="16" text-anchor="middle">psb</text>
+  <!-- aisb trapezoid -->
+  <path class="tile-green" d="M505 330 L695 330 L665 398 L535 398 Z"/>
+  <text class="mono" x="600" y="360" font-size="16" text-anchor="middle">aisb</text>
   <text class="cap" x="600" y="381" font-size="12.5" text-anchor="middle">sandbox CLI</text>
 
   <!-- Container group -->
@@ -137,11 +137,11 @@
   <path class="a-green" d="M428 295 C 560 295, 660 293, 782 293" marker-end="url(#ah-green)"/>
   <text class="albl-g" x="600" y="281" font-size="13" text-anchor="middle">bind mount</text>
 
-  <!-- config -> psb -->
+  <!-- config -> aisb -->
   <path class="a-gray" d="M428 373 L513 366" marker-end="url(#ah-gray)"/>
   <text class="albl-gr" x="468" y="352" font-size="13" text-anchor="middle">reads</text>
 
-  <!-- psb -> container -->
+  <!-- aisb -> container -->
   <path class="a-gray" d="M672 364 L738 364" marker-end="url(#ah-gray)"/>
 
   <!-- dev server -> browser (published port) -->

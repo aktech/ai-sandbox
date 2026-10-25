@@ -13,7 +13,7 @@ func TestInject_PlainHeader(t *testing.T) {
 	inj := NewInjector(rules, map[string]string{"anthropic": "real-key"})
 
 	req, _ := http.NewRequest("GET", "https://api.anthropic.com/v1/messages", nil)
-	req.Header.Set("x-api-key", "__psb_anthropic__")
+	req.Header.Set("x-api-key", "__aisb_anthropic__")
 	inj.Apply(req)
 
 	if got := req.Header.Get("x-api-key"); got != "real-key" {
@@ -28,7 +28,7 @@ func TestInject_BearerFormat(t *testing.T) {
 	inj := NewInjector(rules, map[string]string{"github": "ghp_xxx"})
 
 	req, _ := http.NewRequest("GET", "https://api.github.com/user", nil)
-	req.Header.Set("Authorization", "Bearer __psb_github__")
+	req.Header.Set("Authorization", "Bearer __aisb_github__")
 	inj.Apply(req)
 
 	if got := req.Header.Get("Authorization"); got != "Bearer ghp_xxx" {
@@ -45,7 +45,7 @@ func TestInject_BasicAuthGitPush(t *testing.T) {
 	inj := NewInjector(rules, map[string]string{"github": "ghp_real"})
 
 	req, _ := http.NewRequest("POST", "https://github.com/u/r.git/git-receive-pack", nil)
-	sentinelCreds := base64.StdEncoding.EncodeToString([]byte("x-access-token:__psb_github__"))
+	sentinelCreds := base64.StdEncoding.EncodeToString([]byte("x-access-token:__aisb_github__"))
 	req.Header.Set("Authorization", "Basic "+sentinelCreds)
 	inj.Apply(req)
 
@@ -58,9 +58,9 @@ func TestInject_BasicAuthGitPush(t *testing.T) {
 func TestInject_NoRuleForHost_Untouched(t *testing.T) {
 	inj := NewInjector(map[string]InjectRule{}, map[string]string{})
 	req, _ := http.NewRequest("GET", "https://example.com/", nil)
-	req.Header.Set("x-api-key", "__psb_anthropic__")
+	req.Header.Set("x-api-key", "__aisb_anthropic__")
 	inj.Apply(req)
-	if got := req.Header.Get("x-api-key"); got != "__psb_anthropic__" {
+	if got := req.Header.Get("x-api-key"); got != "__aisb_anthropic__" {
 		t.Fatalf("header changed for unconfigured host: %q", got)
 	}
 }

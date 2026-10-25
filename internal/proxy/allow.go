@@ -1,4 +1,4 @@
-// Package proxy implements the credential-injecting egress proxy that psb
+// Package proxy implements the credential-injecting egress proxy that aisb
 // sandboxes route through. The allowlist is default-deny: only hosts that
 // match an entry may be reached. A "*." prefix matches any subdomain depth;
 // a plain entry matches that exact host only.

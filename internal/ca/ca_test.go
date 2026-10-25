@@ -8,7 +8,7 @@ import (
 )
 
 func TestGenerateCA_ParsesAndIsCA(t *testing.T) {
-	certPEM, keyPEM, err := Generate("psb proxy CA")
+	certPEM, keyPEM, err := Generate("aisb proxy CA")
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}

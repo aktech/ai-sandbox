@@ -8,31 +8,31 @@ import (
 )
 
 func TestNetworkName(t *testing.T) {
-	if got := networkName("psb-foo"); got != "psb-net-foo" {
+	if got := networkName("aisb-foo"); got != "aisb-net-foo" {
 		t.Fatalf("networkName = %q", got)
 	}
 }
 
 func TestProxyRunArgs(t *testing.T) {
-	got := proxyRunArgs("psb-proxy", "ai-sandbox-proxy:latest")
-	want := []string{"run", "-d", "--name", "psb-proxy", "--network", "bridge",
-		"--tmpfs", "/run/psb:rw,mode=1777,size=1m", "ai-sandbox-proxy:latest"}
+	got := proxyRunArgs("aisb-proxy", "ai-sandbox-proxy:latest")
+	want := []string{"run", "-d", "--name", "aisb-proxy", "--network", "bridge",
+		"--tmpfs", "/run/aisb:rw,mode=1777,size=1m", "ai-sandbox-proxy:latest"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("proxyRunArgs = %#v\nwant %#v", got, want)
 	}
 }
 
 func TestWritePayloadExecArgs(t *testing.T) {
-	got := writePayloadExecArgs("psb-proxy")
-	want := []string{"exec", "-i", "psb-proxy", "/psb-proxy", "--write-payload"}
+	got := writePayloadExecArgs("aisb-proxy")
+	want := []string{"exec", "-i", "aisb-proxy", "/aisb-proxy", "--write-payload"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("writePayloadExecArgs = %#v\nwant %#v", got, want)
 	}
 }
 
 func TestWriteRulesExecArgs(t *testing.T) {
-	got := writeRulesExecArgs("psb-proxy", "psb-proja")
-	want := []string{"exec", "-i", "psb-proxy", "/psb-proxy", "--write-rules", "psb-proja"}
+	got := writeRulesExecArgs("aisb-proxy", "aisb-proja")
+	want := []string{"exec", "-i", "aisb-proxy", "/aisb-proxy", "--write-rules", "aisb-proja"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("writeRulesExecArgs = %#v\nwant %#v", got, want)
 	}
@@ -88,20 +88,20 @@ func TestRulesForProject_Unrestricted(t *testing.T) {
 }
 
 func TestInternalNetCreateArgs(t *testing.T) {
-	got := internalNetCreateArgs("psb-net-foo")
-	want := []string{"network", "create", "--internal", "psb-net-foo"}
+	got := internalNetCreateArgs("aisb-net-foo")
+	want := []string{"network", "create", "--internal", "aisb-net-foo"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("internalNetCreateArgs = %#v\nwant %#v", got, want)
 	}
 }
 
 func TestNetConnectDisconnectArgs(t *testing.T) {
-	if got := netConnectArgs("psb-net-foo", "psb-proxy"); !reflect.DeepEqual(got,
-		[]string{"network", "connect", "psb-net-foo", "psb-proxy"}) {
+	if got := netConnectArgs("aisb-net-foo", "aisb-proxy"); !reflect.DeepEqual(got,
+		[]string{"network", "connect", "aisb-net-foo", "aisb-proxy"}) {
 		t.Fatalf("netConnectArgs = %#v", got)
 	}
-	if got := netDisconnectArgs("psb-net-foo", "psb-proxy"); !reflect.DeepEqual(got,
-		[]string{"network", "disconnect", "psb-net-foo", "psb-proxy"}) {
+	if got := netDisconnectArgs("aisb-net-foo", "aisb-proxy"); !reflect.DeepEqual(got,
+		[]string{"network", "disconnect", "aisb-net-foo", "aisb-proxy"}) {
 		t.Fatalf("netDisconnectArgs = %#v", got)
 	}
 }

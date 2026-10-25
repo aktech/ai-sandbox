@@ -23,7 +23,7 @@ func readSecrets(r io.Reader) (*secretsInput, error) {
 	return &in, nil
 }
 
-// readRules decodes a RuleSet (delivered on every psb; carries no secret
+// readRules decodes a RuleSet (delivered on every aisb; carries no secret
 // values, only host/secret-name rules, so it needs no store unlock).
 func readRules(r io.Reader) (proxy.RuleSet, error) {
 	var rs proxy.RuleSet

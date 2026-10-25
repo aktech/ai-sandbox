@@ -1,4 +1,4 @@
-// Package cfg loads the per-project psb config and merges it with
+// Package cfg loads the per-project aisb config and merges it with
 // caller-provided defaults into a single Effective config.
 //
 // File schema (~/.config/ai-sandbox/config.json):
@@ -29,9 +29,12 @@ import (
 type Project struct {
 	Memory      string   `json:"memory,omitempty"`
 	CPUs        any      `json:"cpus,omitempty"`
+	GPUs        string   `json:"gpus,omitempty"` // docker --gpus value: "all", "device=0,1", "2"; "" = no GPU
 	Image       string   `json:"image,omitempty"`
 	Mounts      []string `json:"mounts,omitempty"`       // declarative mount list (replaces defaults)
 	ExtraMounts []string `json:"extra_mounts,omitempty"` // appended after mounts
+	Copies      []string `json:"copies,omitempty"`       // one-way copies (like mounts, but with no back-propagation)
+	ExtraCopies []string `json:"extra_copies,omitempty"` // appended after copies
 	Ports       []string `json:"ports,omitempty"`        // "host:container" port publishes
 
 	Proxy      *ProxyBlock `json:"proxy,omitempty"`       // egress proxy config
@@ -64,9 +67,11 @@ type Effective struct {
 	Image       string
 	Memory      string
 	CPUs        string
+	GPUs        string
 	SharedDir   string
 	Mounts      []string
 	ExtraMounts []string
+	Copies      []string
 	Ports       []string
 	Proxy       *ProxyBlock
 }
@@ -96,8 +101,13 @@ func Resolve(path, project string, base Effective) Effective {
 		if p.CPUs != nil {
 			cfg.CPUs = fmt.Sprintf("%v", p.CPUs)
 		}
+		if p.GPUs != "" {
+			cfg.GPUs = p.GPUs
+		}
 		cfg.Mounts = append(cfg.Mounts, p.Mounts...)
 		cfg.ExtraMounts = append(cfg.ExtraMounts, p.ExtraMounts...)
+		cfg.Copies = append(cfg.Copies, p.Copies...)
+		cfg.Copies = append(cfg.Copies, p.ExtraCopies...)
 		cfg.Ports = append(cfg.Ports, p.Ports...)
 		if p.Proxy != nil {
 			// A proxy block fully defines the proxy for this scope, REPLACING any

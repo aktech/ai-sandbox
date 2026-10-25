@@ -20,7 +20,7 @@ type InjectRule struct {
 }
 
 // Sentinel returns the placeholder value the sandbox uses for a secret name.
-func Sentinel(name string) string { return "__psb_" + name + "__" }
+func Sentinel(name string) string { return "__aisb_" + name + "__" }
 
 type Injector struct {
 	rules   map[string]InjectRule // keyed by host
