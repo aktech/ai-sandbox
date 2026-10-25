@@ -161,6 +161,12 @@ func cmdBuild(log *logger) error {
 	}
 
 	log.OK("built " + image)
+	// Keep the proxy image in step with this aisb when proxy mode is in use.
+	if cmd.ProxySetUp() || proxyImageExists() {
+		if err := buildProxyImage(log); err != nil {
+			return err
+		}
+	}
 	list := exec.Command("docker", "images",
 		"--format", "table {{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.CreatedSince}}",
 		image,
@@ -182,7 +188,7 @@ Usage:
   aisb status      show container status
   aisb ls          list all aisb-* containers
   aisb build       (re)build the image
-  aisb proxy init  generate the egress-proxy CA + secret store
+  aisb proxy init  set up proxy mode (master password, CA, proxy image)
   aisb proxy stop  stop the shared credential proxy
   aisb proxy log   stream the proxy's allow/deny log
   aisb secret set <name>  store a secret (no echo)
@@ -234,7 +240,7 @@ func main() {
 	}
 	os.Args = filtered
 
-	h := cmd.Handler{Log: log, Docker: dx.Cmd{}, WaitCopies: waitCopies}
+	h := cmd.Handler{Log: log, Docker: dx.Cmd{}, WaitCopies: waitCopies, ProxySource: proxySourceHash()}
 
 	if _, err := exec.LookPath("docker"); err != nil {
 		log.Die("docker not found — install or `colima start`", 1)
@@ -333,7 +339,7 @@ func main() {
 		dieOn(dispatchSecret(h, os.Args[2:]))
 	case "proxy":
 		// aisb proxy init|stop|log
-		dieOn(dispatchProxy(h, os.Args[2:]))
+		dieOn(dispatchProxy(h, log, os.Args[2:]))
 	case "__copy":
 		// Internal: one background copy started by `aisb` (async copies).
 		if len(os.Args) != 5 {
@@ -382,7 +388,7 @@ secrets in memory, injects them into allowed requests, and enforces a per-projec
 domain allowlist. Sandboxes sit on a private network whose only exit is the proxy.
 
 Usage:
-  aisb proxy init  generate the CA + an empty secret store (run once)
+  aisb proxy init  one-time setup: master password, CA, secret store, proxy image
   aisb proxy stop  stop the shared proxy container
   aisb proxy log   stream the proxy's live ALLOW / DENY decisions
 
@@ -421,14 +427,21 @@ func dispatchSecret(h cmd.Handler, args []string) error {
 }
 
 // dispatchProxy routes `aisb proxy <action>`.
-func dispatchProxy(h cmd.Handler, args []string) error {
+func dispatchProxy(h cmd.Handler, log *logger, args []string) error {
 	if len(args) == 0 || isHelp(args[0]) {
 		os.Stdout.WriteString(proxyHelp + "\n")
 		return nil
 	}
 	switch args[0] {
 	case "init":
-		return h.ProxyInit()
+		if err := h.ProxyInit(); err != nil {
+			return err
+		}
+		if err := buildProxyImage(log); err != nil {
+			return fmt.Errorf("proxy set up, but building its image failed (see above): %w\nfix the problem, then run `aisb build`", err)
+		}
+		proxyNextSteps(log, cfgPath())
+		return nil
 	case "stop":
 		return h.ProxyStop()
 	case "log", "logs":

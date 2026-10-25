@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -55,5 +56,30 @@ func TestSecretLS_WrongPasswordExplainsRecovery(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not mention %q", err, want)
 		}
+	}
+}
+
+// Proxy mode with no `aisb proxy init` yet must say so and name the command,
+// before anything else (image checks, password prompts) is attempted.
+func TestCheckProxySetUp(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("AISB_CONFIG_FILE", filepath.Join(dir, "config.json"))
+
+	err := checkProxySetUp()
+	if err == nil || !strings.Contains(err.Error(), "aisb proxy init") {
+		t.Fatalf("not set up: error = %v, want it to name `aisb proxy init`", err)
+	}
+	if ProxySetUp() {
+		t.Fatal("ProxySetUp() = true with no CA")
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "ca.crt"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkProxySetUp(); err != nil {
+		t.Fatalf("set up: unexpected error %v", err)
+	}
+	if !ProxySetUp() {
+		t.Fatal("ProxySetUp() = false with a CA present")
 	}
 }

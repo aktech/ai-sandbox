@@ -109,46 +109,48 @@ func TestNetConnectDisconnectArgs(t *testing.T) {
 }
 
 // inspectStub is a dx.Executor whose Output answers `docker image inspect`
-// with a fixed entrypoint, or fails as if the image did not exist.
+// with a fixed aisb.proxy-source label, or fails as if the image did not exist.
 type inspectStub struct {
-	entrypoint string
-	missing    bool
+	label   string
+	missing bool
 }
 
 func (s inspectStub) Output(...string) (string, error) {
 	if s.missing {
 		return "", errors.New("No such image")
 	}
-	return s.entrypoint, nil
+	return s.label + "\n", nil
 }
 func (inspectStub) Run(...string) error                  { return nil }
 func (inspectStub) RunSilent(...string) error            { return nil }
 func (inspectStub) Replace(...string) error              { return nil }
 func (inspectStub) RunWithStdin([]byte, ...string) error { return nil }
 
-// The proxy image is checked before the master password is asked for, so a
-// missing or pre-rename image is reported up front with the command that fixes
-// it, instead of failing after the password was typed.
+// The proxy image is checked before the master password is asked for. An image
+// built from different proxy source than this aisb carries (an older aisb, or
+// none recorded) is out of date; a missing one is reported as such. Both say
+// to run `aisb build`, which needs no repository checkout.
 func TestCheckProxyImage(t *testing.T) {
 	cases := []struct {
 		name    string
 		stub    inspectStub
 		wantErr string
 	}{
-		{"current", inspectStub{entrypoint: `["/aisb-proxy"]`}, ""},
+		{"current", inspectStub{label: "abc123"}, ""},
 		{"missing", inspectStub{missing: true}, "not found"},
-		{"outdated", inspectStub{entrypoint: `["/psb-proxy"]`}, "out of date"},
+		{"other version", inspectStub{label: "old999"}, "out of date"},
+		{"unlabelled", inspectStub{label: "<no value>"}, "out of date"},
 	}
 	for _, c := range cases {
-		err := checkProxyImage(c.stub, "ai-sandbox-proxy:latest")
+		err := checkProxyImage(c.stub, "ai-sandbox-proxy:latest", "abc123")
 		if c.wantErr == "" {
 			if err != nil {
 				t.Errorf("%s: unexpected error %v", c.name, err)
 			}
 			continue
 		}
-		if err == nil || !strings.Contains(err.Error(), c.wantErr) || !strings.Contains(err.Error(), "make proxy-image") {
-			t.Errorf("%s: error = %v, want it to say %q and `make proxy-image`", c.name, err, c.wantErr)
+		if err == nil || !strings.Contains(err.Error(), c.wantErr) || !strings.Contains(err.Error(), "aisb build") {
+			t.Errorf("%s: error = %v, want it to say %q and `aisb build`", c.name, err, c.wantErr)
 		}
 	}
 }

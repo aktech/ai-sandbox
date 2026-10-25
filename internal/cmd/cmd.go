@@ -37,6 +37,11 @@ type Handler struct {
 	Docker     dx.Executor
 	WaitCopies bool // wait for copies to complete before entering the shell
 
+	// ProxySource identifies the proxy source this aisb binary builds the proxy
+	// image from (see main's proxySourceHash). In proxy mode the running image
+	// must carry the same value in its ProxySourceLabel, or it is out of date.
+	ProxySource string
+
 	// caHostPath is the host path of the proxy CA cert, stashed by ensure when
 	// proxy mode is active so create/buildSpec can mount it into the sandbox.
 	caHostPath string
@@ -61,7 +66,10 @@ func (h Handler) ensure(name string, c cfg.Effective, home, cwd string, extraLab
 	if c.Proxy != nil {
 		h.caHostPath = caCertPath()
 		if !dx.ContainerRunning(h.Docker, proxyContainer) {
-			if err := checkProxyImage(h.Docker, proxyImage()); err != nil {
+			if err := checkProxySetUp(); err != nil {
+				return false, err
+			}
+			if err := checkProxyImage(h.Docker, ProxyImage(), h.ProxySource); err != nil {
 				return false, err
 			}
 			h.explainProxyUnlock()
@@ -69,7 +77,7 @@ func (h Handler) ensure(name string, c cfg.Effective, home, cwd string, extraLab
 			if err != nil {
 				return false, err
 			}
-			if err := ensureProxyRunning(h.Docker, proxyImage(), payload); err != nil {
+			if err := ensureProxyRunning(h.Docker, ProxyImage(), payload); err != nil {
 				return false, fmt.Errorf("start proxy: %w", err)
 			}
 		}

@@ -13,8 +13,8 @@ import (
 
 const proxyContainer = "aisb-proxy"
 
-// proxyImage returns the proxy container image, overridable for testing/CI.
-func proxyImage() string {
+// ProxyImage returns the proxy container image, overridable for testing/CI.
+func ProxyImage() string {
 	if v := os.Getenv("AISB_PROXY_IMAGE"); v != "" {
 		return v
 	}
@@ -141,18 +141,21 @@ func networkExists(e dx.Executor, net string) bool {
 	return false
 }
 
-// checkProxyImage confirms the proxy image exists and runs /aisb-proxy (images
-// built before the psb → aisb rename run /psb-proxy and cannot take the
-// payload). It runs before the master password prompt so a fixable setup
-// problem is reported first.
-func checkProxyImage(e dx.Executor, image string) error {
-	out, err := e.Output("image", "inspect", "--format", "{{json .Config.Entrypoint}}", image)
+// ProxySourceLabel is the image label recording which proxy source an image
+// was built from, so aisb can tell when the image is out of date.
+const ProxySourceLabel = "aisb.proxy-source"
+
+// checkProxyImage confirms the proxy image exists and was built from the proxy
+// source this aisb carries (want). It runs before the master password prompt
+// so a setup problem is reported first, with the command that fixes it.
+func checkProxyImage(e dx.Executor, image, want string) error {
+	out, err := e.Output("image", "inspect", "--format", "{{index .Config.Labels \""+ProxySourceLabel+"\"}}", image)
 	if err != nil {
-		return fmt.Errorf("proxy image %s not found: build it from the ai-sandbox repo with `make proxy-image`", image)
+		return fmt.Errorf("proxy image %s not found: run `aisb build` to build it", image)
 	}
-	if !strings.Contains(out, `"/aisb-proxy"`) {
-		return fmt.Errorf("proxy image %s is out of date (built before the psb → aisb rename): "+
-			"rebuild it from the ai-sandbox repo with `make proxy-image`", image)
+	if strings.TrimSpace(out) != want {
+		return fmt.Errorf("proxy image %s is out of date (built by a different aisb version): "+
+			"run `aisb build` to rebuild it", image)
 	}
 	return nil
 }

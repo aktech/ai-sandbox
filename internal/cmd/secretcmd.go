@@ -49,6 +49,22 @@ func masterPassword(prompt string) ([]byte, error) {
 	return readPasswordMasked(int(os.Stdin.Fd()), prompt)
 }
 
+// ProxySetUp reports whether `aisb proxy init` has been run (its CA exists).
+func ProxySetUp() bool {
+	_, err := os.Stat(caCertPath())
+	return err == nil
+}
+
+// checkProxySetUp explains what to run when proxy mode is on in the config but
+// `aisb proxy init` has never been run.
+func checkProxySetUp() error {
+	if ProxySetUp() {
+		return nil
+	}
+	return fmt.Errorf("proxy mode is on (%s has a \"proxy\" block) but it is not set up yet: "+
+		"run `aisb proxy init` once, or remove the \"proxy\" block to turn proxy mode off", configFilePath())
+}
+
 // unlockSecrets asks for the master password (prompt) and decrypts the secret
 // store, turning failures into errors that say which file and what to do.
 func unlockSecrets(prompt string) (pw []byte, secrets map[string]string, err error) {
