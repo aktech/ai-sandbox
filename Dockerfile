@@ -99,10 +99,11 @@ RUN set -e \
 # resolves at the same path inside the container. -o allows duplicate uid/gid
 # (gid 20 conflicts with debian's `dialout`).
 #
-# Pre-create the agent state dirs (~/.pi/agent, ~/.claude, ~/dev, ~/sb-shared) and
-# chown to agent. Without this, docker auto-creates them as root when individual
-# files inside are bind-mounted, leaving the parent dir un-writable for agent
-# (pi tries to mkdir bin/, write settings.json.lock, etc. — all fail with EACCES).
+# Pre-create the agent state dirs (~/.pi/agent, ~/.claude, ~/.codex, ~/dev,
+# ~/sb-shared) and chown to agent. Without this, docker auto-creates them as root
+# when individual files inside are bind-mounted, leaving the parent dir
+# un-writable for agent (pi tries to mkdir bin/, write settings.json.lock, etc. —
+# all fail with EACCES).
 RUN set -e \
  && groupadd -o -g "$AGENT_GID" hoststaff \
  && useradd  -o -u "$AGENT_UID" -g "$AGENT_GID" -d "$AGENT_HOME" -M -s /bin/zsh agent \
@@ -110,6 +111,7 @@ RUN set -e \
       "$AGENT_HOME/.pi/agent" \
       "$AGENT_HOME/.pi/agent/bin" \
       "$AGENT_HOME/.claude" \
+      "$AGENT_HOME/.codex" \
       "$AGENT_HOME/dev" \
       "$AGENT_HOME/sb-shared" \
  && chown -R agent:hoststaff "$AGENT_HOME" \
@@ -131,6 +133,21 @@ RUN set -e \
       claude --version \
     '
 
+# codex (OpenAI Codex CLI) via npm, installed as the agent user so the `codex`
+# binary lands in $HOME/.local/bin (user-owned, writable) — same rationale as
+# claude above: the container stays mutable so the agent can self-update. npm's
+# --prefix points the global install at ~/.local, whose bin dir is already on
+# PATH; codex's `#!/usr/bin/env node` launcher resolves node through the mise
+# shim already on PATH. The npm cache is dropped to keep the layer slim.
+ARG CODEX_VERSION=latest
+RUN set -e \
+ && su -s /bin/sh agent -c ' \
+      export HOME='"$AGENT_HOME"' PATH='"$AGENT_HOME"'/.local/bin:$PATH && \
+      npm install -g --prefix "$HOME/.local" @openai/codex@'"$CODEX_VERSION"' && \
+      codex --version && \
+      rm -rf "$HOME/.npm" \
+    '
+
 # Confirm shims resolve under the unprivileged user too — catches perm bugs at
 # build time rather than first `aisb` shell.
 RUN set -e \
@@ -146,6 +163,7 @@ RUN set -e \
       kubectl version --client=true && \
       k9s     version && \
       claude  --version && \
+      codex   --version && \
       pi      --version    \
     '
 
