@@ -508,7 +508,7 @@ ARCH=$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
 F=aisb-$OS-$ARCH
 curl -fsSLO "https://github.com/aktech/ai-sandbox/releases/latest/download/$F.tar.gz"
 curl -fsSLO "https://github.com/aktech/ai-sandbox/releases/latest/download/$F.tar.gz.sha256"
-shasum -a 256 -c "$F.tar.gz.sha256"
+if command -v sha256sum &gt;/dev/null; then sha256sum -c "$F.tar.gz.sha256"; else shasum -a 256 -c "$F.tar.gz.sha256"; fi
 tar -xzf "$F.tar.gz"
 mkdir -p ~/.local/bin &amp;&amp; install -m 0755 "$F" ~/.local/bin/aisb
 
