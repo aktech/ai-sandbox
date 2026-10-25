@@ -3,492 +3,662 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>ai-sandbox · run AI coding agents in a box, not on your laptop</title>
-<meta name="description" content="aisb spins up a disposable Docker sandbox per project for Claude Code, pi, and other AI coding agents. The agent only sees the folders you mount. If it goes wrong, you lose the container, not your home directory." />
+<title>ai-sandbox</title>
+<meta name="description" content="aisb runs AI coding agents like Claude Code and pi inside a Docker container per project. The agent only sees the folders you mount. If it goes wrong, you lose the container, not your home directory." />
 <meta property="og:title" content="ai-sandbox" />
-<meta property="og:description" content="Run AI coding agents in a disposable Docker sandbox. The agent sees only what you mount." />
+<meta property="og:description" content="Run AI coding agents in a Docker container per project. The agent sees only what you mount." />
 <meta property="og:type" content="website" />
+<meta name="color-scheme" content="dark light" />
+<meta name="theme-color" content="#0f100e" />
+<script>
+  // Apply a saved theme before first paint so the page never flashes the wrong colours.
+  try { const t = localStorage.getItem('theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Fira+Code:wght@400;500;600&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet" />
 <style>
   :root {
-    --bg:        #060a0b;
-    --bg-2:      #0a1012;
-    --panel:     #0d1416;
-    --line:      #16221f;
-    --line-2:    #1f3330;
-    --fg:        #c9d4d0;
-    --fg-dim:    #6f827c;
-    --fg-faint:  #3f4f4b;
-    --green:     #2bff9c;
-    --green-d:   #14b877;
-    --cyan:      #34e3ff;
-    --amber:     #ffcf5c;
-    --red:       #ff5c6c;
-    --mono:      'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-    --term:      'Fira Code', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
-    --sans:      'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
-    --display:   'IBM Plex Sans', var(--sans);
-    --glow:      0 0 18px rgba(43,255,156,.35);
+    --bg:      #0f100e;
+    --fg:      #ecebe7;
+    --fg-2:    #b4b3ad;
+    --muted:   #7d7c76;
+    --faint:   #4a4a45;
+    --line:    #23241f;
+    --line-2:  #2e2f2a;
+    --well:    #151613;
+    --accent:  #e8a565;
+    --fg-hover:#fff;
+
+    /* syntax */
+    --k-prog:  #ecebe7;
+    --k-flag:  #9fc4b8;
+    --k-str:   #e8c08e;
+    --k-num:   #c8a5e0;
+    --k-key:   #9fc4b8;
+    --k-com:   #6b6a64;
+    --k-ok:    #a8cf8f;
+    --k-step:  #9fc4b8;
+
+    /* the terminal window stays dark in both themes */
+    --t-fg:    #ecebe7;
+    --t-fg-2:  #b4b3ad;
+    --t-muted: #8a8983;
+    --t-step:  #9fc4b8;
+    --t-ok:    #a8cf8f;
+
+    --font-sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'Fira Code', ui-monospace, Menlo, monospace;
+
+    --gutter: 64px;
+    color-scheme: dark;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg:        #f6f5f1;
+      --fg:        #1b1b18;
+      --fg-2:      #4a4944;
+      --muted:   #75746d;
+      --faint:   #b4b2aa;
+      --line:      #e4e2db;
+      --line-2:  #d6d4cc;
+      --well:      #eeece6;
+      --accent:  #b0611f;
+      --fg-hover:#000;
+
+      --k-prog:  #1b1b18;
+      --k-flag:  #2c6b5f;
+      --k-str:   #95561a;
+      --k-num:   #75459a;
+      --k-key:   #2c6b5f;
+      --k-com:   #8c8a83;
+      --k-ok:      #3b7728;
+      color-scheme: light;
+    }
+  }
+  :root[data-theme="light"] {
+    --bg:      #f6f5f1;
+    --fg:      #1b1b18;
+    --fg-2:    #4a4944;
+    --muted:   #75746d;
+    --faint:   #b4b2aa;
+    --line:    #e4e2db;
+    --line-2:  #d6d4cc;
+    --well:    #eeece6;
+    --accent:  #b0611f;
+    --fg-hover:#000;
+
+    --k-prog:  #1b1b18;
+    --k-flag:  #2c6b5f;
+    --k-str:   #95561a;
+    --k-num:   #75459a;
+    --k-key:   #2c6b5f;
+    --k-com:   #8c8a83;
+    --k-ok:    #3b7728;
+    color-scheme: light;
   }
 
   * { box-sizing: border-box; }
-  html { scroll-behavior: smooth; }
+  html { background: var(--bg); }
   body {
     margin: 0;
     background: var(--bg);
     color: var(--fg);
-    font-family: var(--sans);
-    font-size: 15.5px;
-    line-height: 1.65;
+    font-family: var(--font-sans);
+    font-weight: 300;
+    font-size: 19px;
+    line-height: 1.55;
+    letter-spacing: -0.005em;
     -webkit-font-smoothing: antialiased;
-    overflow-x: hidden;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
   }
-  code, pre, kbd, samp { font-family: var(--mono); }
+  ::selection { background: rgba(232,165,101,.32); color: var(--fg); }
+  a { color: inherit; }
+  code, pre, kbd { font-family: var(--font-mono); font-feature-settings: 'calt' 1; }
 
-  /* ---- atmospheric layers ---- */
-  .grid-bg, .scan, .grain { position: fixed; inset: 0; pointer-events: none; z-index: 0; }
-  .grid-bg {
-    background-image:
-      linear-gradient(var(--line) 1px, transparent 1px),
-      linear-gradient(90deg, var(--line) 1px, transparent 1px);
-    background-size: 46px 46px;
-    -webkit-mask-image: radial-gradient(ellipse 90% 70% at 50% 0%, #000 35%, transparent 90%);
-            mask-image: radial-gradient(ellipse 90% 70% at 50% 0%, #000 35%, transparent 90%);
-    opacity: .5;
+  /* ---------- layout ---------- */
+  .wrap {
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: 40px var(--gutter) 56px;
   }
-  .scan {
-    background: repeating-linear-gradient(0deg, rgba(0,0,0,0) 0, rgba(0,0,0,0) 2px, rgba(0,0,0,.18) 3px, rgba(0,0,0,0) 4px);
-    mix-blend-mode: overlay; opacity: .5;
-  }
-  .grain {
-    opacity: .045;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  }
-  .halo {
-    position: fixed; z-index: 0; pointer-events: none;
-    width: 70vw; height: 70vw; max-width: 900px; max-height: 900px;
-    top: -22vw; left: 50%; transform: translateX(-50%);
-    background: radial-gradient(circle, rgba(43,255,156,.10), transparent 62%);
-    filter: blur(8px);
-  }
+  .wrap > * { min-width: 0; }
+  .col { max-width: 680px; margin-left: auto; margin-right: auto; width: 100%; }
+  .top.col { max-width: none; }
 
-  .wrap { position: relative; z-index: 2; max-width: 1080px; margin: 0 auto; padding: 0 24px; }
-
-  /* ---- nav ---- */
-  nav {
-    position: sticky; top: 0; z-index: 20;
-    backdrop-filter: blur(12px);
-    background: rgba(8,13,14,.9);
-    border-bottom: 1px solid var(--line-2);
+  /* ---------- top bar ---------- */
+  .top {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 24px;
   }
-  .nav-in { display: flex; align-items: center; justify-content: space-between; height: 70px; }
-  .brand { font-family: var(--mono); font-weight: 600; letter-spacing: -.02em; color: var(--fg); text-decoration: none; font-size: 19px; display: flex; align-items: center; gap: 2px; }
-  .brand b { color: var(--green); font-weight: 800; }
-  .brand .cur { color: var(--green); animation: blink 1.1s steps(1) infinite; margin-left: 1px; }
-  @keyframes blink { 50% { opacity: 0; } }
-  .nav-links { display: flex; gap: 30px; align-items: center; }
-  .nav-links a { color: var(--fg); text-decoration: none; font-size: 15px; transition: color .15s; }
-  .nav-links a:hover { color: var(--green); }
-  .nav-gh {
-    border: 1px solid var(--line-2); padding: 9px 17px; border-radius: 5px; font-size: 14px;
-    color: var(--fg) !important; transition: all .18s;
+  .wordmark {
+    font-weight: 600; font-size: 20px; letter-spacing: -0.02em;
+    text-decoration: none; color: var(--fg);
+    display: inline-flex; align-items: center; gap: 10px;
+    padding: 4px 0;
+    white-space: nowrap;
   }
-  .nav-gh:hover { border-color: var(--green); box-shadow: var(--glow); }
-  @media (max-width: 720px) { .nav-links .hideable { display: none; } }
-
-  /* ---- hero ---- */
-  header { padding: 88px 0 64px; position: relative; }
-  .tag {
-    display: inline-flex; align-items: center; gap: 8px;
-    font-family: var(--mono);
-    font-size: 12px; color: var(--green); border: 1px solid var(--line-2);
-    background: rgba(43,255,156,.05); padding: 5px 12px; border-radius: 999px; margin-bottom: 30px;
+  .wordmark svg { display: block; }
+  .top nav { display: flex; gap: 28px; }
+  .top nav a {
+    font-size: 15px; font-weight: 400; color: var(--muted); text-decoration: none;
+    padding: 4px 0;
+    transition: color .15s;
   }
-  .tag .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: var(--glow); animation: pulse 2s infinite; }
-  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+  .top nav a:hover { color: var(--fg); }
+  .top-right { display: flex; align-items: center; gap: 28px; }
+  .theme {
+    width: 36px; height: 36px; display: inline-grid; place-items: center;
+    background: none; border: 1px solid var(--line-2); border-radius: 9px;
+    color: var(--muted); cursor: pointer; transition: color .15s, border-color .15s;
+  }
+  .theme:hover { color: var(--fg); border-color: var(--faint); }
+  .theme .sun { display: none; }
+  .theme.is-dark .sun { display: block; }
+  .theme.is-dark .moon { display: none; }
 
+  /* ---------- hero ---------- */
+  .hero { padding: 128px 0 72px; }
   h1 {
-    font-family: var(--display);
-    font-weight: 700; letter-spacing: -.03em; line-height: 1.05;
-    font-size: clamp(34px, 6.4vw, 64px);
-    margin: 0 0 22px; color: #eaf3ef;
+    font-weight: 500;
+    font-size: clamp(30px, 2.6vw, 38px);
+    line-height: 1.18;
+    letter-spacing: -0.022em;
+    margin: 0 0 22px;
+    max-width: 22ch;
   }
-  h1 .hl { color: var(--green); text-shadow: var(--glow); }
-  h1 .strike { color: var(--fg-dim); text-decoration: line-through; text-decoration-color: var(--red); text-decoration-thickness: 3px; }
-  .lede { font-family: var(--mono); font-size: clamp(14px, 1.7vw, 16px); color: var(--fg-dim); max-width: 640px; line-height: 1.8; margin: 0 0 36px; }
-  .lede b { color: var(--fg); font-weight: 500; }
-
-  .cta-row { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+  h1 em { font-style: normal; color: var(--accent); }
+  .lede { color: var(--fg-2); margin: 0 0 36px; max-width: 34em; }
+  .actions { display: flex; flex-wrap: wrap; gap: 12px; }
   .btn {
-    font-family: var(--mono); font-size: 16px; font-weight: 500;
-    padding: 15px 26px; border-radius: 6px; text-decoration: none; cursor: pointer;
-    display: inline-flex; align-items: center; gap: 10px; transition: all .18s; border: 1px solid transparent;
+    display: inline-flex; align-items: center; gap: 10px;
+    font: 400 15.5px/1 var(--font-sans);
+    padding: 13px 18px;
+    border-radius: 10px;
+    text-decoration: none;
+    border: 1px solid var(--line-2);
+    color: var(--fg);
+    transition: border-color .15s, background .15s;
   }
-  .btn-primary { background: var(--green); color: #04140d; box-shadow: var(--glow); }
-  .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 0 26px rgba(43,255,156,.55); }
-  .btn-ghost { border-color: var(--line-2); color: var(--fg); }
-  .btn-ghost:hover { border-color: var(--cyan); color: var(--cyan); }
+  .btn:hover { border-color: var(--faint); background: var(--well); }
+  .btn.primary { background: var(--fg); color: var(--bg); border-color: var(--fg); font-weight: 500; }
+  .btn.primary:hover { background: var(--fg-hover); }
+  .btn svg { flex: none; }
 
-  /* ---- terminal window ---- */
-  .term {
-    margin-top: 58px;
-    background: linear-gradient(180deg, var(--panel), #080d0e);
-    border: 1px solid var(--line-2); border-radius: 10px;
-    box-shadow: 0 30px 80px -30px rgba(0,0,0,.9), 0 0 0 1px rgba(43,255,156,.04), inset 0 1px 0 rgba(255,255,255,.03);
+  /* ---------- note strip ---------- */
+  .note {
+    display: flex; align-items: center; justify-content: space-between; gap: 20px;
+    border: 1px solid var(--line-2);
+    border-radius: 16px;
+    padding: 16px 20px;
+    margin: 0 0 88px;
+  }
+  .note span { color: var(--fg-2); font-size: 17px; }
+  .note code { font-size: 15px; color: var(--fg); }
+  .note a { color: var(--accent); text-decoration: none; font-size: 17px; white-space: nowrap; padding: 2px 0; }
+  .note a:hover { text-decoration: underline; text-underline-offset: 4px; }
+
+  /* ---------- sections ---------- */
+  section { margin: 0 0 96px; }
+  .label {
+    font-size: 16px; font-weight: 400; color: var(--muted);
+    margin: 0 0 18px;
+  }
+  p { margin: 0 0 20px; }
+  .prose p { color: var(--fg); }
+  .prose p.dim { color: var(--fg-2); }
+  p code, li code, td code {
+    font-size: .8em;
+    color: var(--fg);
+    background: var(--well);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 1px 6px;
+    white-space: nowrap;
+  }
+
+  /* numbered list */
+  ol.steps { list-style: none; margin: 0; padding: 0; counter-reset: s; }
+  ol.steps li {
+    counter-increment: s;
+    display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 8px;
+    padding: 6px 0;
+  }
+  ol.steps li::before { content: counter(s); color: var(--muted); font-feature-settings: 'tnum' 1; }
+  ol.steps li span.sub { display: block; color: var(--fg-2); font-size: 17px; margin-top: 2px; }
+
+  /* before/after */
+  .contrast {
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    border: 1px solid var(--line-2); border-radius: 16px; overflow: hidden;
+    margin-top: 32px;
+  }
+  .contrast > div { padding: 22px 24px 24px; }
+  .contrast > div + div { border-left: 1px solid var(--line-2); }
+  .contrast h3 { font-size: 15px; font-weight: 500; margin: 0 0 14px; color: var(--muted); }
+  .contrast > div:last-child h3 { color: var(--accent); }
+  .contrast ul { list-style: none; margin: 0; padding: 0; }
+  .contrast li { font-size: 16.5px; color: var(--fg-2); padding: 5px 0; }
+  .contrast > div:last-child li { color: var(--fg); }
+
+  /* command table */
+  table.cmds { width: 100%; border-collapse: collapse; font-size: 17px; }
+  table.cmds td { padding: 12px 0; border-top: 1px solid var(--line); vertical-align: baseline; }
+  table.cmds tr:last-child td { border-bottom: 1px solid var(--line); }
+  table.cmds td:first-child { width: 170px; padding-right: 20px; white-space: nowrap; }
+  table.cmds td:first-child code { font-size: 15px; background: none; border: 0; padding: 0; color: var(--fg); }
+  table.cmds td:last-child { color: var(--fg-2); }
+
+  /* code blocks */
+  .code {
+    position: relative;
+    background: var(--well);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    margin: 24px 0 20px;
+  }
+  .code-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 12px 10px 18px;
+    border-bottom: 1px solid var(--line);
+    font-size: 13.5px; color: var(--muted); font-weight: 400;
+  }
+  .code pre {
+    margin: 0; padding: 18px 18px 20px;
+    font-size: 14px; line-height: 1.75;
+    color: var(--fg-2);
+    overflow-x: auto;
+  }
+  .copy {
+    width: 30px; height: 30px;
+    display: inline-grid; place-items: center;
+    background: transparent; border: 1px solid transparent; border-radius: 7px;
+    color: var(--muted); cursor: pointer;
+    transition: color .15s, border-color .15s;
+    position: relative;
+  }
+  .copy:hover { color: var(--fg); border-color: var(--line-2); }
+  .copy .done { display: none; }
+  .copy.ok .idle { display: none; }
+  .copy.ok .done { display: block; color: var(--k-ok); }
+  .copy::after {
+    content: 'Copied'; position: absolute; right: 38px; top: 50%; transform: translateY(-50%);
+    font: 400 13px/1 var(--font-sans); color: var(--k-ok);
+    opacity: 0; transition: opacity .15s; pointer-events: none; white-space: nowrap;
+  }
+  .copy.ok::after { opacity: 1; }
+
+  .t-prog { color: var(--k-prog); }
+  .t-flag { color: var(--k-flag); }
+  .t-str  { color: var(--k-str); }
+  .t-num  { color: var(--k-num); }
+  .t-key  { color: var(--k-key); }
+  .t-com  { color: var(--k-com); }
+  .t-pun  { color: var(--muted); }
+
+  .small { font-size: 16px; color: var(--fg-2); }
+
+  /* footer */
+  footer {
+    margin-top: auto;
+    padding-top: 28px;
+    border-top: 1px solid var(--line);
+    display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px;
+    font-size: 15px; color: var(--muted);
+  }
+  footer nav { display: flex; gap: 24px; }
+  footer a { text-decoration: none; color: var(--muted); padding: 2px 0; }
+  footer a:hover { color: var(--fg); }
+
+  /* ---------- gradient band ---------- */
+  .band { margin: 0 0 112px; }
+  .panel {
+    position: relative;
+    border-radius: 20px;
+    overflow: hidden;
+    display: grid; place-items: center;
+    padding: 96px 48px 104px;
+    isolation: isolate;
+    background: linear-gradient(170deg, #1e3b44 0%, #4f6b6a 22%, #c99a69 52%, #e5a062 66%, #bd6a3f 84%, #6f3e2a 100%);
+  }
+  .panel::after {
+    /* static film grain */
+    content: ''; position: absolute; inset: 0; z-index: -1;
+    opacity: .22; mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .9 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  .window {
+    width: min(100%, 860px);
+    background: rgba(14, 14, 12, .88);
+    backdrop-filter: blur(18px) saturate(1.1);
+    -webkit-backdrop-filter: blur(18px) saturate(1.1);
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: 14px;
+    box-shadow: 0 40px 80px -30px rgba(0,0,0,.55), 0 2px 6px rgba(0,0,0,.2);
     overflow: hidden;
   }
-  .term-bar { display: flex; align-items: center; gap: 8px; padding: 11px 15px; border-bottom: 1px solid var(--line); background: var(--bg-2); font-family: var(--term); }
-  .term-bar .b { width: 11px; height: 11px; border-radius: 50%; }
-  .b.r { background: #ff5f56; } .b.y { background: #ffbd2e; } .b.g { background: #27c93f; }
-  .term-title { margin-left: 10px; color: var(--fg-faint); font-size: 12px; }
-  .term-title .path { color: var(--fg-dim); }
-  .term-body { padding: 24px 24px 28px; font-family: var(--term); font-size: 15.5px; line-height: 1.95; min-height: 340px; font-feature-settings: 'calt' 1, 'liga' 1; }
-  .ln { white-space: pre-wrap; word-break: break-word; }
-  .prompt { color: var(--green); }
-  .prompt .usr { color: var(--cyan); }
-  .cmd { color: #eaf3ef; }
-  .out { color: var(--fg-dim); }
-  .out .ok { color: var(--green); }
-  .out .warn { color: var(--amber); }
-  .out .acc { color: var(--cyan); }
-  .caret { display: inline-block; width: 8px; height: 15px; background: var(--green); vertical-align: -2px; box-shadow: var(--glow); animation: blink 1s steps(1) infinite; }
-
-  /* ---- section scaffolding ---- */
-  section { padding: 82px 0; position: relative; }
-  .eyebrow { font-family: var(--mono); color: var(--green-d); font-size: 12px; letter-spacing: .22em; text-transform: uppercase; margin: 0 0 14px; }
-  h2 { font-family: var(--display); font-weight: 700; letter-spacing: -.02em; font-size: clamp(26px, 4vw, 40px); margin: 0 0 16px; color: #eaf3ef; }
-  .sub { color: var(--fg-dim); max-width: 600px; margin: 0 0 44px; }
-
-  /* ---- blast radius ---- */
-  .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
-  @media (max-width: 700px) { .compare { grid-template-columns: 1fr; } }
-  .pane { border: 1px solid var(--line-2); border-radius: 10px; padding: 26px; background: var(--panel); position: relative; overflow: hidden; }
-  .pane.bad { border-color: rgba(255,92,108,.3); }
-  .pane.good { border-color: rgba(43,255,156,.28); box-shadow: inset 0 0 50px rgba(43,255,156,.05); }
-  .pane h3 { font-family: var(--display); font-size: 15px; margin: 0 0 16px; display: flex; align-items: center; gap: 10px; }
-  .pane.bad h3 { color: var(--red); }
-  .pane.good h3 { color: var(--green); }
-  .pane ul { margin: 0; padding: 0; list-style: none; }
-  .pane li { padding: 7px 0 7px 24px; position: relative; color: var(--fg-dim); font-size: 13.5px; }
-  .pane li::before { position: absolute; left: 0; }
-  .pane.bad li::before { content: "✕"; color: var(--red); }
-  .pane.good li::before { content: "✓"; color: var(--green); }
-  .pane li b { color: var(--fg); font-weight: 500; }
-
-  /* ---- features ---- */
-  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
-  @media (max-width: 880px) { .grid { grid-template-columns: repeat(2, 1fr); } }
-  @media (max-width: 560px) { .grid { grid-template-columns: 1fr; } }
-  .card {
-    border: 1px solid var(--line); border-radius: 10px; padding: 24px; background: var(--panel);
-    transition: border-color .2s, transform .2s, box-shadow .2s; position: relative;
+  .window-bar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 12px 16px;
+    border-bottom: 1px solid rgba(255,255,255,.06);
   }
-  .card:hover { border-color: var(--line-2); transform: translateY(-3px); box-shadow: 0 16px 40px -22px rgba(0,0,0,.8); }
-  .card .ico { font-family: var(--display); color: var(--green); font-size: 13px; border: 1px solid var(--line-2); border-radius: 6px; width: 38px; height: 38px; display: flex; align-items: center; justify-content: center; margin-bottom: 16px; background: rgba(43,255,156,.04); }
-  .card h3 { font-size: 14.5px; margin: 0 0 8px; color: #eaf3ef; font-weight: 600; }
-  .card p { margin: 0; color: var(--fg-dim); font-size: 13px; line-height: 1.65; }
-  .card p code { color: var(--cyan); background: var(--bg-2); padding: 1px 5px; border-radius: 3px; font-size: 12px; }
-
-  /* ---- steps ---- */
-  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; border: 1px solid var(--line-2); border-radius: 10px; overflow: hidden; }
-  @media (max-width: 760px) { .steps { grid-template-columns: 1fr; } }
-  .step { padding: 28px 26px; border-right: 1px solid var(--line); background: var(--panel); }
-  .step:last-child { border-right: none; }
-  @media (max-width: 760px) { .step { border-right: none; border-bottom: 1px solid var(--line); } }
-  .step .n { font-family: var(--display); font-size: 12px; color: var(--green); margin-bottom: 14px; }
-  .step h3 { font-size: 14.5px; margin: 0 0 9px; color: #eaf3ef; }
-  .step p { margin: 0 0 14px; color: var(--fg-dim); font-size: 13px; }
-  .step code.line { display: block; background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 9px 12px; color: var(--green); font-size: 12.5px; }
-  .step code.line .c { color: var(--fg-faint); }
-
-  /* ---- commands table ---- */
-  .cmds { border: 1px solid var(--line-2); border-radius: 10px; overflow: hidden; background: var(--panel); }
-  .cmd-row { display: grid; grid-template-columns: 200px 1fr; gap: 0; border-bottom: 1px solid var(--line); transition: background .15s; }
-  .cmd-row:last-child { border-bottom: none; }
-  .cmd-row:hover { background: var(--bg-2); }
-  .cmd-row .k { font-family: var(--mono); padding: 13px 20px; color: var(--green); border-right: 1px solid var(--line); font-size: 13.5px; }
-  .cmd-row .v { padding: 13px 20px; color: var(--fg-dim); font-size: 13.5px; }
-  @media (max-width: 560px) { .cmd-row { grid-template-columns: 1fr; } .cmd-row .k { border-right: none; border-bottom: 1px solid var(--line); } }
-
-  /* ---- install ---- */
-  .install-box { background: linear-gradient(180deg, var(--panel), #080d0e); border: 1px solid var(--line-2); border-radius: 10px; overflow: hidden; }
-  .install-tabs { display: flex; border-bottom: 1px solid var(--line); }
-  .install-tab { font-family: var(--mono); padding: 12px 18px; color: var(--fg-faint); font-size: 12px; border-right: 1px solid var(--line); }
-  .install-tab.active { color: var(--green); background: var(--bg-2); }
-  .codeblock { padding: 22px 22px; position: relative; }
-  .codeblock pre { margin: 0; font-family: var(--mono); font-size: 13px; line-height: 1.95; color: var(--fg); overflow-x: auto; }
-  .codeblock .c { color: var(--fg-faint); }
-  .codeblock .g { color: var(--green); }
-  .codeblock .a { color: var(--cyan); }
-  .copy {
-    position: absolute; top: 16px; right: 16px; background: var(--bg); border: 1px solid var(--line-2);
-    color: var(--fg-dim); font-family: var(--mono); font-size: 11px; padding: 6px 11px; border-radius: 5px; cursor: pointer; transition: all .15s;
+  .window-bar i { width: 12px; height: 12px; border-radius: 50%; box-shadow: inset 0 0 0 .5px rgba(0,0,0,.25); }
+  .window-bar i:nth-child(1) { background: #ff5f57; }
+  .window-bar i:nth-child(2) { background: #febc2e; }
+  .window-bar i:nth-child(3) { background: #28c840; }
+  .window-bar span { margin-left: 10px; font-size: 13px; color: var(--t-muted); font-weight: 400; }
+  .session {
+    margin: 0; padding: 20px 22px 24px;
+    font-family: var(--font-mono);
+    font-size: 15px; line-height: 1.8;
+    color: var(--t-fg-2);
+    display: grid;
   }
-  .copy:hover { border-color: var(--green); color: var(--green); }
-  .copy.done { color: var(--green); border-color: var(--green); }
+  /* ghost holds the finished session invisibly so the window never changes height while typing */
+  .session > .ghost, .session > .live { grid-area: 1 / 1; white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
+  .session > .ghost { visibility: hidden; }
+  .session .caret { display: inline-block; width: .6em; height: 1.15em; vertical-align: -.2em; background: var(--t-fg); margin-left: 1px; }
+  .session .l { display: block; padding-left: 2ch; text-indent: -2ch; }
+  .session .ps { color: var(--t-muted); }
+  .session .in { color: var(--t-fg); }
+  .session .tag { color: var(--t-step); }
+  .session .ok { color: var(--t-ok); }
+  .session .gap { display: block; height: 10px; }
+  .caption {
+    position: absolute; left: 28px; right: 28px; bottom: 24px;
+    font-size: 14px; color: rgba(255,255,255,.78); font-weight: 400;
+    display: flex; justify-content: space-between; gap: 16px;
+  }
 
-  /* ---- closing cta ---- */
-  .final { text-align: center; padding: 96px 0; }
-  .final h2 { font-size: clamp(28px, 5vw, 48px); margin-bottom: 18px; }
-  .final p { color: var(--fg-dim); margin: 0 auto 34px; max-width: 460px; }
-
-  footer { border-top: 1px solid var(--line); padding: 36px 0 56px; }
-  .foot-in { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px; }
-  .foot-in .brand { font-size: 14px; }
-  .foot-links { display: flex; gap: 22px; }
-  .foot-links a { color: var(--fg-faint); text-decoration: none; font-size: 12.5px; transition: color .15s; }
-  .foot-links a:hover { color: var(--green); }
-  .foot-note { color: var(--fg-faint); font-size: 12px; margin-top: 18px; }
-
-  /* ---- reveal on scroll ---- */
-  .reveal { opacity: 0; transform: translateY(22px); transition: opacity .7s cubic-bezier(.2,.7,.2,1), transform .7s cubic-bezier(.2,.7,.2,1); }
-  .reveal.in { opacity: 1; transform: none; }
-
-  ::selection { background: rgba(43,255,156,.28); color: #eaf3ef; }
+  /* ---------- responsive ---------- */
+  @media (max-width: 900px) {
+    :root { --gutter: 16px; }
+    .wrap { padding-top: 24px; }
+    .top nav { display: none; }
+    .hero { padding: 80px 0 48px; }
+    .band { margin-bottom: 80px; }
+    .panel { padding: 20px 16px; border-radius: 16px; }
+    .caption { position: static; margin-top: 16px; width: 100%; }
+  }
+  @media (max-width: 560px) {
+    body { font-size: 17.5px; }
+    .contrast { grid-template-columns: minmax(0, 1fr); }
+    .contrast > div + div { border-left: 0; border-top: 1px solid var(--line-2); }
+    .note { flex-direction: column; align-items: flex-start; gap: 8px; }
+    table.cmds td:first-child { width: 120px; }
+    .session { font-size: 13px; padding: 14px 14px 16px; }
+  }
 </style>
 </head>
 <body>
-  <div class="grid-bg"></div>
-  <div class="halo"></div>
-  <div class="scan"></div>
-  <div class="grain"></div>
+<div class="wrap">
+    <header class="top col">
+      <a class="wordmark" href="#" aria-label="ai-sandbox home">
+        <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true">
+          <rect x="1" y="1" width="20" height="20" rx="5" stroke="currentColor" stroke-width="1.6"/>
+          <rect x="6.5" y="6.5" width="9" height="9" rx="2" fill="var(--accent)"/>
+        </svg>
+        ai-sandbox
+      </a>
+      <div class="top-right">
+      <nav aria-label="Sections">
+        <a href="#why">Why</a>
+        <a href="#how">How it works</a>
+        <a href="#install">Install</a>
+        <a href="https://github.com/aktech/ai-sandbox" rel="noopener">GitHub</a>
+      </nav>
+      <button class="theme" id="theme" type="button" aria-label="Switch colour theme">
+        <svg class="sun" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+        <svg class="moon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      </button>
+      </div>
+    </header>
 
-  <nav>
-    <div class="wrap nav-in">
-      <a class="brand" href="#top">ai<b>-</b>sandbox<span class="cur">▌</span></a>
-      <div class="nav-links">
-        <a class="hideable" href="#why">Why</a>
-        <a class="hideable" href="#features">Features</a>
-        <a class="hideable" href="#how">How it works</a>
-        <a class="hideable" href="#install">Install</a>
-        <a class="nav-gh" href="https://github.com/aktech/ai-sandbox" target="_blank" rel="noopener">GitHub ↗</a>
+    <div class="hero col">
+      <h1>Run AI coding agents <em>in a box,</em> not on your laptop.</h1>
+      <p class="lede">One command gives every project its own Docker container with Claude Code and pi already installed. The agent sees only the folders you hand it. If something goes wrong, you delete the container and your machine is untouched.</p>
+      <div class="actions">
+        <a class="btn primary" href="#install">Install aisb</a>
+        <a class="btn" href="https://github.com/aktech/ai-sandbox" rel="noopener">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3.991.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.313 3.285-.991 3.285-.991.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>
+          View on GitHub
+        </a>
       </div>
     </div>
-  </nav>
 
-  <header id="top">
-    <div class="wrap">
-      <div class="tag reveal"><span class="dot"></span> aisb · the per-project agent sandbox</div>
-      <h1 class="reveal">Run AI agents in a <span class="hl">box</span>,<br />not on your <span class="strike">laptop</span>.</h1>
-      <p class="lede reveal">Claude Code, pi, and friends are powerful and occasionally reckless. <b>aisb</b> drops each one into its own disposable Docker container that can only see the folders you mount in. If the agent goes off the rails, you lose the container, not your home directory.</p>
-      <div class="cta-row reveal">
-        <a class="btn btn-primary" href="#install">$ get started</a>
-        <a class="btn btn-ghost" href="https://github.com/aktech/ai-sandbox" target="_blank" rel="noopener">View source ↗</a>
-      </div>
-
-      <div class="term reveal" id="term">
-        <div class="term-bar">
-          <span class="b r"></span><span class="b y"></span><span class="b g"></span>
-          <span class="term-title">zsh · <span class="path">~/dev/my-project</span></span>
+    <div class="band">
+    <div class="panel">
+        <div class="window">
+          <div class="window-bar"><i></i><i></i><i></i><span>~/dev/my-project</span></div>
+<pre class="session" id="session" aria-label="Example aisb session"><div class="ghost" aria-hidden="true"><span class="l"><span class="ps">$</span> <span class="in">aisb</span></span><span class="l"><span class="tag">[aisb]</span> project: my-project  container: aisb-my-project</span><span class="l"><span class="tag">[aisb]</span> → creating container aisb-my-project (image=ai-sandbox-pi:latest, mem=4g, cpus=2)</span><span class="l"><span class="tag">[aisb]</span> <span class="ok">container created</span></span><span class="gap"></span><span class="l"><span class="ps">aisb-my-project $</span> <span class="in">claude</span></span></div><div class="live"></div></pre>
         </div>
-        <div class="term-body" id="term-body"></div>
+        <div class="caption"><span>First run creates the container. Every run after re-enters it.</span></div>
       </div>
     </div>
-  </header>
 
-  <section id="why">
-    <div class="wrap">
-      <p class="eyebrow reveal">The blast radius</p>
-      <h2 class="reveal">An agent on your laptop can touch everything.</h2>
-      <p class="sub reveal">It has your shell, your SSH keys, your <code>.env</code> files, your whole home directory. One bad <code>rm</code> or a prompt-injected tool call and there is no undo. A sandbox draws a hard line around what the agent can reach.</p>
-      <div class="compare">
-        <div class="pane bad reveal">
-          <h3>◇ agent on the host</h3>
-          <ul>
-            <li>Sees your <b>entire home directory</b> by default</li>
-            <li>Can read SSH keys, tokens, every <b>.env</b></li>
-            <li>A wrong command hits real files <b>instantly</b></li>
-            <li>Installed tools pollute your global setup</li>
-            <li>No clean blast radius, so recovery is manual</li>
-          </ul>
-        </div>
-        <div class="pane good reveal">
-          <h3>◆ agent in aisb</h3>
-          <ul>
-            <li>Sees <b>only the paths you explicitly mount</b></li>
-            <li>Secrets stay out unless you opt them in</li>
-            <li>Worst case: <code style="color:var(--cyan)">aisb rm</code> and the mess is <b>gone</b></li>
-            <li>Tools live in the image, not your machine</li>
-            <li>One container per project, fully isolated</li>
-          </ul>
-        </div>
+    <div class="rest col">
+      <div class="note">
+        <span>Open source, MIT licensed.</span>
+        <a href="https://github.com/aktech/ai-sandbox/releases">Release notes</a>
       </div>
-    </div>
-  </section>
 
-  <section id="features">
-    <div class="wrap">
-      <p class="eyebrow reveal">What you get</p>
-      <h2 class="reveal">Isolation that stays out of your way.</h2>
-      <p class="sub reveal">One command spins up (or re-enters) a sandbox for the current project and drops you into a shell where the agents are already installed.</p>
-      <div class="grid">
-        <div class="card reveal"><div class="ico">[ ]</div><h3>One box per project</h3><p>Each directory gets its own named container. Re-running <code>aisb</code> re-enters the same one, so your session survives.</p></div>
-        <div class="card reveal"><div class="ico">▤</div><h3>Explicit mounts only</h3><p>The container sees the project dir and nothing else, until you list more paths. Write <code>src</code> or <code>src:dest</code>.</p></div>
-        <div class="card reveal"><div class="ico">⌁</div><h3>Disposable by design</h3><p><code>aisb rm</code> and the container is gone. No leftover state, no half-broken global environment to clean up.</p></div>
-        <div class="card reveal"><div class="ico">⚙</div><h3>Batteries included</h3><p>Debian slim with <code>claude</code>, <code>pi</code>, Node, Go, <code>uv</code>, <code>pixi</code>, <code>git</code>, and <code>zsh</code> baked into the image.</p></div>
-        <div class="card reveal"><div class="ico">⟳</div><h3>Files stay yours</h3><p>The container runs as a non-root user whose UID/GID matches the host, so files it creates stay writable from outside.</p></div>
-        <div class="card reveal"><div class="ico">⧉</div><h3>Persistent sessions</h3><p><code>tmux</code> ships in the image, so long-running agent runs keep going across re-entries and detaches.</p></div>
-      </div>
-    </div>
-  </section>
+      <section id="why" class="prose">
+        <p class="label">Why</p>
+        <p>A coding agent running in your terminal can do anything you can. It can read your SSH keys, your cloud credentials and every <code>.env</code> file in your home directory, and one mistaken command reaches real files immediately.</p>
+        <p class="dim">Most of the time that is fine. The trouble is the one time it is not: a misread instruction, a prompt hidden in a web page the agent fetched, a cleanup step that deletes the wrong folder. There is no undo.</p>
+        <p class="dim">aisb draws a line around the agent. It keeps the speed of letting it work on its own, and limits the damage to one container you can throw away.</p>
 
-  <section id="how">
-    <div class="wrap">
-      <p class="eyebrow reveal">Three commands</p>
-      <h2 class="reveal">From zero to sandboxed agent.</h2>
-      <p class="sub reveal">Build the binary, build the image once, then live in <code>aisb</code>.</p>
-      <div class="steps">
-        <div class="step reveal">
-          <div class="n">01 / build the CLI</div>
-          <h3>Get aisb on your PATH</h3>
-          <p>Compile the Go binary into <code>./bin/aisb</code> and put it somewhere on your path.</p>
-          <code class="line">make build</code>
+        <div class="contrast">
+          <div>
+            <h3>Agent on your machine</h3>
+            <ul>
+              <li>Sees your whole home directory</li>
+              <li>Can read keys, tokens and secrets</li>
+              <li>Installs tools into your setup</li>
+              <li>Mistakes land on real files</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Agent in aisb</h3>
+            <ul>
+              <li>Sees only the folders you mount</li>
+              <li>Secrets stay out unless you add them</li>
+              <li>Tools live in the image</li>
+              <li>Worst case: <code>aisb rm</code></li>
+            </ul>
+          </div>
         </div>
-        <div class="step reveal">
-          <div class="n">02 / build the image</div>
-          <h3>One-time image build</h3>
-          <p>Bake the Debian image with the agents and toolchain. Takes a few minutes, once.</p>
-          <code class="line">aisb build <span class="c"># ~5 min</span></code>
-        </div>
-        <div class="step reveal">
-          <div class="n">03 / enter</div>
-          <h3>Drop into the sandbox</h3>
-          <p>From any project, run <code>aisb</code> and start <code>claude</code> or <code>pi</code> as usual.</p>
-          <code class="line">cd ~/dev/my-project && aisb</code>
-        </div>
-      </div>
-    </div>
-  </section>
+      </section>
 
-  <section id="commands">
-    <div class="wrap">
-      <p class="eyebrow reveal">Reference</p>
-      <h2 class="reveal">The command surface.</h2>
-      <p class="sub reveal">Small on purpose. Everything is scoped to the project directory you run it from.</p>
-      <div class="cmds reveal">
-        <div class="cmd-row"><div class="k">aisb</div><div class="v">Enter the sandbox for the current project.</div></div>
-        <div class="cmd-row"><div class="k">aisb create</div><div class="v">Create the container (mounts + labels) without opening a shell.</div></div>
-        <div class="cmd-row"><div class="k">aisb stop</div><div class="v">Stop the current project's container.</div></div>
-        <div class="cmd-row"><div class="k">aisb rm</div><div class="v">Delete the current project's container.</div></div>
-        <div class="cmd-row"><div class="k">aisb ls</div><div class="v">List all sandboxes.</div></div>
-        <div class="cmd-row"><div class="k">aisb status</div><div class="v">Show one container's status.</div></div>
-        <div class="cmd-row"><div class="k">aisb build</div><div class="v">Rebuild the image.</div></div>
-      </div>
-    </div>
-  </section>
+      <section id="how" class="prose">
+        <p class="label">How it works</p>
+        <p>Run <code>aisb</code> inside any project folder. The first time, it creates a container named after the folder. Every time after, it drops you back into that same container.</p>
+        <ol class="steps">
+          <li><div>One container per project.<span class="sub">Each folder gets its own, so one project cannot see another.</span></div></li>
+          <li><div>Only the folders you list.<span class="sub">The project is mounted by default. Your git config, dotfiles or a shared library are added in one config file.</span></div></li>
+          <li><div>Files stay yours.<span class="sub">The container runs as a normal user with your user and group ids, so anything it writes is still editable from outside.</span></div></li>
+          <li><div>Everything already installed.<span class="sub">Debian slim with <code>claude</code>, <code>pi</code>, Node, Go, <code>uv</code>, <code>pixi</code>, <code>git</code>, <code>tmux</code> and <code>zsh</code>.</span></div></li>
+        </ol>
+      </section>
 
-  <section id="install">
-    <div class="wrap">
-      <p class="eyebrow reveal">Install</p>
-      <h2 class="reveal">You need Docker, then two builds.</h2>
-      <p class="sub reveal">On macOS, <a href="https://github.com/abiosoft/colima" target="_blank" rel="noopener" style="color:var(--cyan);text-decoration:none">colima</a> works well: run <code>colima start</code> and you have a Docker daemon.</p>
-      <div class="install-box reveal">
-        <div class="install-tabs">
-          <div class="install-tab active">setup.sh</div>
-          <div class="install-tab">zsh</div>
-        </div>
-        <div class="codeblock">
-          <button class="copy" id="copyBtn">copy</button>
-<pre id="installCode"><span class="c"># 1. clone and build the CLI</span>
-git clone <span class="a">https://github.com/aktech/ai-sandbox</span>
+      <section id="commands">
+        <p class="label">Commands</p>
+        <table class="cmds">
+          <tr><td><code>aisb</code></td><td>Enter the sandbox for the current project.</td></tr>
+          <tr><td><code>aisb stop</code></td><td>Stop this project's container.</td></tr>
+          <tr><td><code>aisb rm</code></td><td>Delete this project's container.</td></tr>
+          <tr><td><code>aisb ls</code></td><td>List every sandbox.</td></tr>
+          <tr><td><code>aisb status</code></td><td>Show one container's status.</td></tr>
+          <tr><td><code>aisb build</code></td><td>Build or rebuild the image.</td></tr>
+        </table>
+      </section>
+
+      <section id="install">
+        <p class="label">Install</p>
+        <p>You need Docker running and Go to build the CLI. On macOS, <a href="https://github.com/abiosoft/colima" rel="noopener">colima</a> works well. Building the image takes about five minutes, once.</p>
+        <div class="code">
+          <div class="code-head"><span>Terminal</span>
+            <button class="copy" data-copy="install" aria-label="Copy install commands">
+              <svg class="idle" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              <svg class="done" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+            </button>
+          </div>
+<pre id="install-code" data-lang="sh"># build the CLI and put it on your PATH
+git clone https://github.com/aktech/ai-sandbox
 cd ai-sandbox
-make build              <span class="c"># produces ./bin/aisb</span>
-cp bin/aisb /usr/local/bin   <span class="c"># or anywhere on $PATH</span>
+make build
+cp bin/aisb ~/.local/bin/
 
-<span class="c"># 2. build the image (one-time, ~5 min)</span>
+# build the image (one time)
 aisb build
 
-<span class="c"># 3. sandbox any project</span>
+# sandbox any project
 cd ~/dev/my-project
-<span class="g">aisb</span>                   <span class="c"># drops you into zsh, claude + pi ready</span></pre>
+aisb</pre>
         </div>
-      </div>
-      <p class="foot-note reveal">Mounts, per-project memory/CPU limits, and image overrides live in <code style="color:var(--cyan)">~/.config/ai-sandbox/config.json</code>. See the README for the full config.</p>
-    </div>
-  </section>
+      </section>
 
-  <section class="final">
-    <div class="wrap">
-      <h2 class="reveal">Give the agent a box.</h2>
-      <p class="reveal">Keep the speed of letting an AI agent loose, without betting your home directory on it behaving.</p>
-      <div class="cta-row reveal" style="justify-content:center">
-        <a class="btn btn-primary" href="https://github.com/aktech/ai-sandbox" target="_blank" rel="noopener">★ Star on GitHub</a>
-        <a class="btn btn-ghost" href="#install">Read the install →</a>
-      </div>
-    </div>
-  </section>
-
-  <footer>
-    <div class="wrap">
-      <div class="foot-in">
-        <a class="brand" href="#top">ai<b>-</b>sandbox</a>
-        <div class="foot-links">
-          <a href="https://github.com/aktech/ai-sandbox" target="_blank" rel="noopener">GitHub</a>
-          <a href="https://github.com/aktech/ai-sandbox/blob/main/README.md" target="_blank" rel="noopener">README</a>
-          <a href="https://github.com/aktech/ai-sandbox/blob/main/LICENSE" target="_blank" rel="noopener">License</a>
+      <section id="config">
+        <p class="label">Configure</p>
+        <p>Mounts, memory, CPUs and published ports live in <code>~/.config/ai-sandbox/config.json</code>. The default block applies to every project. A project entry adds its own mounts and sets its own memory, CPUs and ports.</p>
+        <div class="code">
+          <div class="code-head"><span>config.json</span>
+            <button class="copy" data-copy="config" aria-label="Copy example config">
+              <svg class="idle" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              <svg class="done" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+            </button>
+          </div>
+<pre id="config-code" data-lang="json">{
+  "default": {
+    "mounts": [
+      "{{HOME}}/.gitconfig",
+      "{{HOME}}/.claude/settings.json",
+      "{{CWD}}"
+    ]
+  },
+  "projects": {
+    "/Users/me/dev/my-project": {
+      "extra_mounts": ["~/dev/shared-lib"],
+      "memory": "8g",
+      "cpus": 4,
+      "ports": ["3000:3000"]
+    }
+  }
+}</pre>
         </div>
-      </div>
-      <p class="foot-note">Open source · run AI coding agents in a disposable Docker sandbox.</p>
+        <p class="small">Full reference, placeholders and environment overrides are in the <a href="https://github.com/aktech/ai-sandbox#readme" rel="noopener">README</a>.</p>
+      </section>
+
+      <footer>
+        <span>ai-sandbox</span>
+        <nav aria-label="Footer">
+          <a href="https://github.com/aktech/ai-sandbox" rel="noopener">GitHub</a>
+          <a href="https://github.com/aktech/ai-sandbox#readme" rel="noopener">README</a>
+          <a href="https://github.com/aktech/ai-sandbox/blob/main/LICENSE" rel="noopener">License</a>
+        </nav>
+      </footer>
     </div>
-  </footer>
+</div>
 
 <script>
-  // ---- typed terminal demo ----
-  const lines = [
-    { t: 600,  html: '<span class="prompt"><span class="usr">you</span> ~/dev/my-project</span> <span class="cmd">$ aisb</span>' },
-    { t: 420,  html: '<span class="out">→ no sandbox for this project yet, creating one…</span>' },
-    { t: 360,  html: '<span class="out">→ image <span class="acc">ai-sandbox-pi:latest</span>  ·  mounts: <span class="acc">2</span></span>' },
-    { t: 320,  html: '<span class="out">→ container <span class="ok">my-project-sbx</span> started <span class="ok">✓</span></span>' },
-    { t: 300,  html: '<span class="out warn">→ only ./my-project is visible inside. host home stays sealed.</span>' },
-    { t: 520,  html: '<span class="prompt"><span class="usr">agent</span> /work</span> <span class="cmd">$ claude</span>' },
-    { t: 360,  html: '<span class="out">  claude code <span class="ok">ready</span> · sandboxed, non-root, uid matched.</span>' },
-    { t: 300,  html: '<span class="out acc">  > what should we build today?</span>' },
-  ];
-  const body = document.getElementById('term-body');
-  let started = false;
-  function typeLine(idx) {
-    if (idx >= lines.length) {
-      const c = document.createElement('span');
-      c.className = 'caret';
-      const wrap = document.createElement('div');
-      wrap.className = 'ln';
-      wrap.appendChild(c);
-      body.appendChild(wrap);
-      return;
-    }
-    const div = document.createElement('div');
-    div.className = 'ln';
-    div.innerHTML = lines[idx].html;
-    div.style.opacity = '0';
-    body.appendChild(div);
-    requestAnimationFrame(() => { div.style.transition = 'opacity .25s'; div.style.opacity = '1'; });
-    setTimeout(() => typeLine(idx + 1), lines[idx].t);
+  // Tiny tokenizer for the two code blocks: shell and JSON.
+  const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  function hlShell(src) {
+    return src.split('\n').map(line => {
+      if (/^\s*#/.test(line)) return '<span class="t-com">' + esc(line) + '</span>';
+      const parts = line.split(/(\s+)/);
+      let first = true;
+      return parts.map(p => {
+        if (/^\s+$/.test(p) || p === '') return p;
+        let cls = '';
+        if (first) { cls = 't-prog'; first = false; }
+        else if (/^-/.test(p)) cls = 't-flag';
+        else if (/^(https?:|~|\/|\.)/.test(p) || p.includes('/')) cls = 't-str';
+        return cls ? '<span class="' + cls + '">' + esc(p) + '</span>' : esc(p);
+      }).join('');
+    }).join('\n');
   }
-  const termObserver = new IntersectionObserver((entries) => {
-    entries.forEach(e => { if (e.isIntersecting && !started) { started = true; typeLine(0); } });
-  }, { threshold: 0.3 });
-  termObserver.observe(document.getElementById('term'));
+  function hlJSON(src) {
+    return esc(src).replace(/("(?:[^"\\]|\\.)*")(\s*:)?|(\b\d+\b)|([{}\[\],])/g, (m, str, colon, num, pun) => {
+      if (str) return colon ? '<span class="t-key">' + str + '</span><span class="t-pun">' + colon + '</span>' : '<span class="t-str">' + str + '</span>';
+      if (num) return '<span class="t-num">' + num + '</span>';
+      return '<span class="t-pun">' + pun + '</span>';
+    });
+  }
+  const raw = {};
+  for (const [id, key] of [['install-code', 'install'], ['config-code', 'config']]) {
+    const el = document.getElementById(id);
+    raw[key] = el.textContent;
+    el.innerHTML = el.dataset.lang === 'json' ? hlJSON(raw[key]) : hlShell(raw[key]);
+  }
 
-  // ---- scroll reveal ----
-  const revObserver = new IntersectionObserver((entries) => {
-    entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('in'); revObserver.unobserve(e.target); } });
-  }, { threshold: 0.12 });
-  document.querySelectorAll('.reveal').forEach((el, i) => {
-    el.style.transitionDelay = (Math.min(i, 6) * 60) + 'ms';
-    revObserver.observe(el);
+  // Theme toggle: system preference by default, the button overrides and is remembered.
+  const themeBtn = document.getElementById('theme');
+  const themeMeta = document.querySelector('meta[name="theme-color"]');
+  const isDark = () => getComputedStyle(document.documentElement).colorScheme.trim() === 'dark';
+  function syncTheme() {
+    const dark = isDark();
+    themeBtn.classList.toggle('is-dark', dark);
+    themeBtn.setAttribute('aria-label', dark ? 'Switch to light theme' : 'Switch to dark theme');
+    themeMeta.content = dark ? '#0f100e' : '#f6f5f1';
+  }
+  themeBtn.addEventListener('click', () => {
+    const next = isDark() ? 'light' : 'dark';
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem('theme', next); } catch (e) {}
+    syncTheme();
   });
+  matchMedia('(prefers-color-scheme: light)').addEventListener('change', syncTheme);
+  syncTheme();
 
-  // ---- copy button ----
-  const btn = document.getElementById('copyBtn');
-  btn.addEventListener('click', () => {
-    const txt = document.getElementById('installCode').innerText;
-    navigator.clipboard.writeText(txt).then(() => {
-      btn.textContent = 'copied ✓'; btn.classList.add('done');
-      setTimeout(() => { btn.textContent = 'copy'; btn.classList.remove('done'); }, 1800);
+  // Terminal: type each command, press enter, then print the lines aisb prints.
+  // Plays once when the window scrolls into view.
+  const session = document.getElementById('session');
+  const live = session.querySelector('.live');
+  const script = [
+    { type: 'aisb', prompt: '<span class="ps">$</span> ' },
+    { out: '<span class="tag">[aisb]</span> project: my-project  container: aisb-my-project', wait: 250 },
+    { out: '<span class="tag">[aisb]</span> → creating container aisb-my-project (image=ai-sandbox-pi:latest, mem=4g, cpus=2)', wait: 200 },
+    { out: '<span class="tag">[aisb]</span> <span class="ok">container created</span>', wait: 1100 },
+    { gap: true, wait: 250 },
+    { type: 'claude', prompt: '<span class="ps">aisb-my-project $</span> ', wait: 300 },
+  ];
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const line = html => { const el = document.createElement('span'); el.className = 'l'; el.innerHTML = html; live.appendChild(el); return el; };
+  const caret = document.createElement('span'); caret.className = 'caret';
+  async function play() {
+    for (const step of script) {
+      await sleep(step.wait || 0);
+      if (step.gap) { const g = document.createElement('span'); g.className = 'gap'; live.appendChild(g); continue; }
+      if (step.out) { line(step.out); continue; }
+      const el = line(step.prompt + '<span class="in"></span>');
+      const input = el.querySelector('.in');
+      el.appendChild(caret);
+      await sleep(500);
+      for (const ch of step.type) { input.textContent += ch; await sleep(70 + Math.random() * 80); }
+      await sleep(450);
+      if (step !== script[script.length - 1]) caret.remove();
+    }
+  }
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    live.innerHTML = session.querySelector('.ghost').innerHTML;
+  } else {
+    const io = new IntersectionObserver(entries => {
+      if (entries.some(e => e.isIntersecting)) { io.disconnect(); play(); }
+    }, { threshold: 0.5 });
+    io.observe(session);
+  }
+
+  document.querySelectorAll('.copy').forEach(btn => {
+    btn.addEventListener('click', () => {
+      navigator.clipboard.writeText(raw[btn.dataset.copy]).then(() => {
+        btn.classList.add('ok');
+        setTimeout(() => btn.classList.remove('ok'), 1600);
+      });
     });
   });
+
 </script>
 </body>
 </html>
