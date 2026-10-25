@@ -66,6 +66,7 @@ list in a config file:
       "extra_mounts": ["~/dev/shared-lib"],
       "memory": "8g",
       "cpus": 4,
+      "gpus": "all",
       "ports": ["3000:3000", "8000:8000"]
     }
   }
@@ -77,7 +78,12 @@ list in a config file:
   `src:dest` to mount it at a different path (e.g. a repo-local gitconfig
   at `~/.gitconfig` inside the sandbox).
 - `extra_mounts` — appended to `mounts`. Use for per-project additions.
-- `memory`, `cpus`, `image` — optional per-project overrides.
+- `memory`, `cpus`, `gpus`, `image` — optional overrides. Set them under
+  `default` to apply everywhere, or under a project to scope them.
+- `gpus` — passed straight to `docker run --gpus` (`"all"`, `"device=0,1"`,
+  or a count like `"2"`). Omit it (the default) for no GPU. Requires the
+  [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+  on a Linux host with NVIDIA drivers — it does **not** work under colima/macOS.
 - `ports` — each entry becomes a `-p host:container` publish, so a server
   you start inside the sandbox is reachable from your laptop browser. With
   `"3000:3000"`, a dev server on `:3000` inside shows up at
@@ -102,6 +108,7 @@ don't exist on the host are skipped with a warning.
 | `AISB_IMAGE_NAME`   | `ai-sandbox-pi:latest`               |
 | `AISB_MEMORY`       | `4g`                                 |
 | `AISB_CPUS`         | `2`                                  |
+| `AISB_GPUS`         | none (e.g. `all` to expose all GPUs) |
 | `AISB_SHARED_DIR`   | `~/sb-shared`                        |
 | `AISB_CONFIG_FILE`  | `~/.config/ai-sandbox/config.json`   |
 | `ANTHROPIC_API_KEY` | passed through to the container      |
