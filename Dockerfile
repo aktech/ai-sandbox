@@ -1,6 +1,9 @@
 FROM debian:bookworm-slim
 
-ARG PI_VERSION=v0.79.1
+# Agent versions are pinned here and only here. To update: bump the value,
+# release aisb, run `aisb build`. To try another version without a release:
+# PI_VERSION=vX.Y.Z / CODEX_VERSION=X.Y.Z aisb build.
+ARG PI_VERSION=v1.4.0
 ARG MISE_VERSION=v2026.5.3
 ARG OMZ_SHA=e64912e0c1eaa32181c3b5e5e4bf8042ecd0e8a7
 ARG TARGETARCH
@@ -92,13 +95,17 @@ RUN set -e \
       amd64) ARCH=x64 ;; \
       *) echo "unsupported arch: $TARGETARCH"; exit 1 ;; \
     esac \
- && URL="https://github.com/badlogic/pi-mono/releases/download/${PI_VERSION}/pi-linux-${ARCH}.tar.gz" \
- && [ "$PI_VERSION" = "latest" ] && URL="https://github.com/badlogic/pi-mono/releases/latest/download/pi-linux-${ARCH}.tar.gz" || true \
- && curl -fsSL -o /tmp/pi.tgz "$URL" \
+ && BASE="https://github.com/earendil-works/pi/releases/download/${PI_VERSION}" \
+ && [ "$PI_VERSION" = "latest" ] && BASE="https://github.com/earendil-works/pi/releases/latest/download" || true \
+ && curl -fsSL -o /tmp/pi.tgz "$BASE/pi-linux-${ARCH}.tar.gz" \
+ && curl -fsSL -o /tmp/pi.sums "$BASE/SHA256SUMS" \
+ && SUM="$(grep " pi-linux-${ARCH}.tar.gz\$" /tmp/pi.sums | cut -d' ' -f1)" \
+ && { [ -n "$SUM" ] || { echo "no checksum for pi-linux-${ARCH}.tar.gz in SHA256SUMS"; exit 1; }; } \
+ && echo "$SUM  /tmp/pi.tgz" | sha256sum -c - \
  && mkdir -p /opt \
  && tar -xzf /tmp/pi.tgz -C /opt \
  && ln -sf /opt/pi/pi /usr/local/bin/pi \
- && rm /tmp/pi.tgz \
+ && rm /tmp/pi.tgz /tmp/pi.sums \
  && /usr/local/bin/pi --version
 
 # Create non-root agent user with HOME matching host's so bind-mounted ~/.pi/agent
@@ -145,7 +152,7 @@ RUN set -e \
 # --prefix points the global install at ~/.local, whose bin dir is already on
 # PATH; codex's `#!/usr/bin/env node` launcher resolves node through the mise
 # shim already on PATH. The npm cache is dropped to keep the layer slim.
-ARG CODEX_VERSION=latest
+ARG CODEX_VERSION=0.164.0
 RUN set -e \
  && su -s /bin/sh agent -c ' \
       export HOME='"$AGENT_HOME"' PATH='"$AGENT_HOME"'/.local/bin:$PATH && \

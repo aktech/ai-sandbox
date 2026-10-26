@@ -282,3 +282,19 @@ mode do not yet combine.
 Debian slim with `claude`, `codex`, `pi`, Node, Go, `uv`, `pixi`, `git`, `zsh`.
 The container runs as a non-root user whose UID/GID matches your host,
 so files you create inside stay writable from outside.
+
+### Keeping the agents up to date
+
+The image is a snapshot: what is installed changes only when you run
+`aisb build`, and a sandbox keeps the image it was created from until you
+`aisb rm` it and run `aisb` again.
+
+- **Claude Code** updates itself inside each sandbox in the background, so
+  it stays current without a rebuild.
+- **pi** and **Codex** are pinned to exact versions in the Dockerfile. Each
+  `aisb` release moves those pins forward; after upgrading `aisb`, run
+  `aisb build`, then `aisb rm` and `aisb` in a project to get a sandbox
+  with the new versions.
+- To try a newer version before a release picks it up:
+  `PI_VERSION=v1.5.0 CODEX_VERSION=0.165.0 aisb build`. pi downloads are
+  checked against the release's `SHA256SUMS`.

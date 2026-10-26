@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -23,5 +24,24 @@ func TestProxyBuildContext_Compiles(t *testing.T) {
 	build.Dir = dir
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("embedded proxy source does not build: %v\n%s", err, out)
+	}
+}
+
+// Agent versions live only in the Dockerfile. aisb build must not pass its own
+// default (a stale copy there is what kept pi old); it passes a version only
+// when the user sets one, e.g. PI_VERSION=v1.5.0 aisb build.
+func TestAgentVersionBuildArgs(t *testing.T) {
+	t.Setenv("PI_VERSION", "")
+	t.Setenv("CODEX_VERSION", "")
+	if got := agentVersionBuildArgs(); len(got) != 0 {
+		t.Fatalf("no overrides: got %v, want none (Dockerfile defaults apply)", got)
+	}
+
+	t.Setenv("PI_VERSION", "v9.9.9")
+	t.Setenv("CODEX_VERSION", "1.2.3")
+	got := strings.Join(agentVersionBuildArgs(), " ")
+	want := "--build-arg PI_VERSION=v9.9.9 --build-arg CODEX_VERSION=1.2.3"
+	if got != want {
+		t.Fatalf("overrides: got %q, want %q", got, want)
 	}
 }
