@@ -112,13 +112,19 @@ RUN set -e \
 # resolves at the same path inside the container. -o allows duplicate uid/gid
 # (gid 20 conflicts with debian's `dialout`).
 #
+# The group is named after the user ("agent"), like a Linux user-private group.
+# Hosts with umask 002 (Ubuntu's default) create group-writable dirs, and zsh's
+# compaudit only accepts those when the group is the user's own private group,
+# matched by name. Any other name makes zsh/oh-my-zsh in a mounted home prompt
+# "insecure directories" on every shell.
+#
 # Pre-create the agent state dirs (~/.pi/agent, ~/.claude, ~/.codex, ~/dev,
 # ~/sb-shared) and chown to agent. Without this, docker auto-creates them as root
 # when individual files inside are bind-mounted, leaving the parent dir
 # un-writable for agent (pi tries to mkdir bin/, write settings.json.lock, etc. —
 # all fail with EACCES).
 RUN set -e \
- && groupadd -o -g "$AGENT_GID" hoststaff \
+ && groupadd -o -g "$AGENT_GID" agent \
  && useradd  -o -u "$AGENT_UID" -g "$AGENT_GID" -d "$AGENT_HOME" -M -s /bin/zsh agent \
  && mkdir -p \
       "$AGENT_HOME/.pi/agent" \
@@ -127,8 +133,8 @@ RUN set -e \
       "$AGENT_HOME/.codex" \
       "$AGENT_HOME/dev" \
       "$AGENT_HOME/sb-shared" \
- && chown -R agent:hoststaff "$AGENT_HOME" \
- && chown -R agent:hoststaff "$MISE_DATA_DIR" "$MISE_CONFIG_DIR" "$MISE_CACHE_DIR" \
+ && chown -R agent:agent "$AGENT_HOME" \
+ && chown -R agent:agent "$MISE_DATA_DIR" "$MISE_CONFIG_DIR" "$MISE_CACHE_DIR" \
  && echo 'agent ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/agent \
  && chmod 0440 /etc/sudoers.d/agent
 
