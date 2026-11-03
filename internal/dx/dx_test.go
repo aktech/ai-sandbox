@@ -199,6 +199,26 @@ func TestInspect_ParsesGPUs(t *testing.T) {
 	}
 }
 
+// A container with no GPU request ends its line with an empty GPU field, and
+// Cmd.Output trims the trailing tab off the last line. Inspect must still
+// return that container.
+func TestInspect_KeepsLastContainerWithoutGPUs(t *testing.T) {
+	line := strings.Join([]string{
+		"/aisb-x", "running", "2026-06-23T08:00:00Z",
+		"8000000000", "17179869184", "/home/me/proj",
+	}, "\t")
+	infos, err := Inspect(outputStub{out: line}, "aisb-x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("got %d infos, want 1", len(infos))
+	}
+	if infos[0].GPUs != "-" {
+		t.Errorf("GPUs = %q, want %q", infos[0].GPUs, "-")
+	}
+}
+
 // fakeGPUHost builds a host with two GPUs whose /dev minor numbers are the
 // reverse of their NVML index, so a test only passes if it maps index → UUID →
 // minor instead of assuming index == minor.

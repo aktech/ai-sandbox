@@ -164,6 +164,10 @@ func Inspect(e Executor, names ...string) ([]Info, error) {
 	var infos []Info
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.SplitN(line, "\t", 7)
+		if len(f) == 6 {
+			// Output trims the last line's trailing tab when GPUs is empty.
+			f = append(f, "")
+		}
 		if len(f) < 7 {
 			continue
 		}
