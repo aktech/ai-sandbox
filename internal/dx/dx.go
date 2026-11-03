@@ -391,7 +391,10 @@ func PrintStatusTable(e Executor, name string) error {
 // Shell replaces the current process with `docker exec -it name /bin/zsh`.
 // Returns only on exec failure.
 func Shell(e Executor, name string) error {
-	return e.Replace("exec", "-it", name, "/bin/zsh")
+	// docker exec sets TERM=xterm (8 colours) and drops COLORTERM. Ask for a
+	// 256-colour terminal the image has terminfo for, and pass the host's
+	// COLORTERM (truecolor) through when it is set.
+	return e.Replace("exec", "-it", "-e", "TERM=xterm-256color", "-e", "COLORTERM", name, "/bin/zsh")
 }
 
 // ---------- format helpers (parsing of Info fields) ----------

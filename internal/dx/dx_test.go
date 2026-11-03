@@ -318,3 +318,19 @@ func TestGPUDevices_UserQuotedList(t *testing.T) {
 		t.Fatalf(`gpuDevices("device=0,1" quoted) = %v, want nvidia1, nvidia0 first`, got)
 	}
 }
+
+// docker exec gives the shell TERM=xterm and no COLORTERM, so programs inside
+// fall back to 8 colours or none. Shell must ask for a 256-colour terminal the
+// image has terminfo for, and carry the host's COLORTERM through.
+func TestShell_PassesColourSupport(t *testing.T) {
+	r := &recorder{}
+	if err := Shell(r, "aisb-x"); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(r.args, " ")
+	for _, want := range []string{"-e TERM=xterm-256color", "-e COLORTERM"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Shell args %q missing %q", got, want)
+		}
+	}
+}
