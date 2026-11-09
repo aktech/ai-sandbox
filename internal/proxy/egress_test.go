@@ -1,13 +1,16 @@
 package proxy
 
 import (
+	"context"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/aktech/ai-sandbox/internal/ca"
 )
@@ -71,5 +74,57 @@ func TestServer_StarDoesNotReachLocalAddresses(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("explicit entry: status %d, want 200", resp.StatusCode)
+	}
+}
+
+// An address that never answers (a black-holed IPv6 route, a dropped SYN) must
+// not stall the request: each attempt gives up after dialTimeout and the next
+// address is tried, so a reachable one still connects quickly.
+func TestGuardedDial_SilentAddressTimesOutAndNextIsTried(t *testing.T) {
+	silent, good := netip.MustParseAddr("2001:db8::1"), netip.MustParseAddr("93.184.215.14")
+	oldLookup, oldDial, oldTimeout := lookupIP, dialIP, dialTimeout
+	t.Cleanup(func() { lookupIP, dialIP, dialTimeout = oldLookup, oldDial, oldTimeout })
+	dialTimeout = 200 * time.Millisecond
+	lookupIP = func(context.Context, string, string) ([]netip.Addr, error) { return []netip.Addr{silent, good}, nil }
+	var tried []string
+	dialIP = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		tried = append(tried, addr)
+		if strings.HasPrefix(addr, "[2001:db8::1]") {
+			<-ctx.Done() // never answers
+			return nil, ctx.Err()
+		}
+		a, b := net.Pipe()
+		t.Cleanup(func() { a.Close(); b.Close() })
+		return a, nil
+	}
+
+	start := time.Now()
+	c, err := guardedDial(context.Background(), "tcp", "example.net:443", true)
+	if err != nil {
+		t.Fatalf("dial failed: %v (tried %v)", err, tried)
+	}
+	c.Close()
+	if took := time.Since(start); took > time.Second {
+		t.Fatalf("took %v: a silent address stalled the dial", took)
+	}
+}
+
+// With every address silent the dial fails within a bounded time instead of
+// hanging the agent's request.
+func TestGuardedDial_AllSilentFailsWithinTimeout(t *testing.T) {
+	oldLookup, oldDial, oldTimeout := lookupIP, dialIP, dialTimeout
+	t.Cleanup(func() { lookupIP, dialIP, dialTimeout = oldLookup, oldDial, oldTimeout })
+	dialTimeout = 150 * time.Millisecond
+	lookupIP = func(context.Context, string, string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("2001:db8::1"), netip.MustParseAddr("2001:db8::2")}, nil
+	}
+	dialIP = func(ctx context.Context, network, addr string) (net.Conn, error) { <-ctx.Done(); return nil, ctx.Err() }
+
+	start := time.Now()
+	if _, err := guardedDial(context.Background(), "tcp", "example.net:443", true); err == nil {
+		t.Fatal("dial to silent addresses succeeded")
+	}
+	if took := time.Since(start); took > time.Second {
+		t.Fatalf("took %v: silent addresses must fail within the dial timeout", took)
 	}
 }
