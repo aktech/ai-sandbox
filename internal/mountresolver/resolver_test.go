@@ -155,7 +155,7 @@ func TestResolve_LaterDestOverridesEarlier(t *testing.T) {
 
 	got := Resolve(
 		[]string{personal + ":/h/.creds"}, // default mount
-		[]string{work + ":/h/.creds"},      // project extra_mount, same dest -> wins
+		[]string{work + ":/h/.creds"},     // project extra_mount, same dest -> wins
 		Env{Home: home}, nil)
 	want := []string{work + ":/h/.creds"}
 	if !reflect.DeepEqual(got, want) {
