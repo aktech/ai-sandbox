@@ -251,3 +251,60 @@ func TestServer_MitmRequestForOtherHostRefused(t *testing.T) {
 		}
 	}
 }
+
+// A secret replaced while the proxy runs (e.g. a refreshed token) must be used
+// for the very next request, with no restart. Run with -race: requests in
+// flight while the secret is swapped must not race.
+func TestServer_UpdateSecretsTakesEffectLive(t *testing.T) {
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, r.Header.Get("x-api-key"))
+	}))
+	defer upstream.Close()
+	upHost := upstream.Listener.Addr().String()
+
+	caCert, caKey, _ := ca.Generate("test")
+	srv, err := New(map[string]string{"anthropic": "OLDKEY"}, caCert, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = srv.UpdateRules(RuleSet{
+		Projects: []Subnet{{CIDR: "127.0.0.0/8", Allow: []string{hostOnly(upHost)}}},
+		Inject:   map[string]InjectRule{hostOnly(upHost): {Header: "x-api-key", Secret: "anthropic"}},
+	})
+	upPool := x509.NewCertPool()
+	upPool.AddCert(upstream.Certificate())
+	srv.TrustUpstreamRoots(upPool)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+	client := newClient(t, ts.URL, caCert)
+
+	get := func() string {
+		req, _ := http.NewRequest("GET", "https://"+upHost+"/", nil)
+		req.Header.Set("x-api-key", Sentinel("anthropic"))
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Errorf("request: %v", err)
+			return ""
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return string(b)
+	}
+	if got := get(); got != "OLDKEY" {
+		t.Fatalf("before update: upstream saw %q, want OLDKEY", got)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 20; i++ {
+			get()
+		}
+	}()
+	srv.UpdateSecrets(map[string]string{"anthropic": "NEWKEY"})
+	<-done
+
+	if got := get(); got != "NEWKEY" {
+		t.Fatalf("after update: upstream saw %q, want NEWKEY", got)
+	}
+}

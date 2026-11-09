@@ -395,8 +395,10 @@ Notes:
   - <name> must match the "secret" field in your proxy.inject rules and the
     proxy.env map in config.json.
   - Set AISB_MASTER_PASSWORD to avoid the master-password prompt.
-  - The proxy loads secrets once at startup; run 'aisb proxy stop' then re-enter
-    a sandbox so a new/changed secret takes effect.`
+  - 'set' and 'rm' also update a running proxy, so a new or refreshed value is
+    used from the next request on, with no restart. To refresh a token that
+    another tool rewrites on the host, pipe it in again, e.g.
+    jq -r .access_token token.json | aisb secret set openai`
 
 const proxyHelp = `aisb proxy - manage the credential-injecting egress proxy
 

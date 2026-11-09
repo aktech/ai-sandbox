@@ -42,6 +42,13 @@ func writePayloadExecArgs(name string) []string {
 	return []string{"exec", "-i", name, "/aisb-proxy", "--write-payload"}
 }
 
+// writeSecretsExecArgs builds argv to hand a running proxy new secret values
+// (no CA) via stdin. The proxy watches the file this writes and swaps the
+// values in for its next request.
+func writeSecretsExecArgs(name string) []string {
+	return []string{"exec", "-i", name, "/aisb-proxy", "--write-secrets"}
+}
+
 // writeRulesExecArgs builds argv to deliver one project's rule file (no
 // secrets) to a running proxy via stdin. key names the per-project file, so
 // concurrent aisb runs never clobber each other's rules.

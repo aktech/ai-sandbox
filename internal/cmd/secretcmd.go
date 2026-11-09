@@ -216,7 +216,7 @@ func (h Handler) SecretSet(name string) error {
 		return err
 	}
 	secrets[name] = val
-	if err := secret.Save(secretsPath(), pw, secrets); err != nil {
+	if err := h.saveSecrets(pw, secrets); err != nil {
 		return err
 	}
 	h.Log.OK("stored secret " + name)
@@ -244,10 +244,34 @@ func (h Handler) SecretRM(name string) error {
 		return err
 	}
 	delete(secrets, name)
-	if err := secret.Save(secretsPath(), pw, secrets); err != nil {
+	if err := h.saveSecrets(pw, secrets); err != nil {
 		return err
 	}
 	h.Log.OK("removed secret " + name)
+	return nil
+}
+
+// saveSecrets writes the store and, when the proxy is running, hands it the new
+// values (no CA, secrets only) so the change takes effect on its next request
+// without a restart. A failed hand-off is a warning: the store is saved and
+// `aisb proxy stop` followed by `aisb` still picks the change up.
+func (h Handler) saveSecrets(pw []byte, secrets map[string]string) error {
+	if err := secret.Save(secretsPath(), pw, secrets); err != nil {
+		return err
+	}
+	if !dx.ContainerRunning(h.Docker, proxyContainer) {
+		return nil
+	}
+	payload, err := json.Marshal(map[string]any{"secrets": secrets})
+	if err == nil {
+		err = h.Docker.RunWithStdin(payload, writeSecretsExecArgs(proxyContainer)...)
+	}
+	if err != nil {
+		h.Log.Warn("saved, but could not update the running proxy (" + err.Error() +
+			"): run `aisb proxy stop`, then `aisb`, to load it")
+		return nil
+	}
+	h.Log.OK("running proxy updated")
 	return nil
 }
 

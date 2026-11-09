@@ -256,6 +256,10 @@ project's rules are isolated from the others.
   host). Even an unrestricted project still has its secrets injected and kept
   out of the container; only the egress limits are lifted.
 
+Secrets update live too: `aisb secret set` and `aisb secret rm` hand the new
+values to a running proxy, so a refreshed token is used from the next request
+without restarting anything.
+
 Rules update live: entering a project pushes its allowlist to the running proxy
 (no master password needed, since rule updates carry no secrets). Removing a
 sandbox (`aisb rm`) drops that project's rules.

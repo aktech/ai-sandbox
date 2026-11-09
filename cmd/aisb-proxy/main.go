@@ -4,7 +4,12 @@
 //  1. aisb starts the container detached.
 //  2. aisb delivers the secrets payload (CA cert+key + secret values) by
 //     running this binary with --write-payload via `docker exec -i`; it lands
-//     on a tmpfs file. The serving process reads it once and builds the proxy.
+//     on a tmpfs file. The serving process reads it, unlinks it and builds the
+//     proxy. Later, `aisb secret set` / `rm` deliver just the secret values
+//     with --write-secrets to a separate file; the serving process watches it
+//     and swaps them in without a restart (the CA is fixed for its lifetime).
+//     The two files never share a path, so a refresh cannot be mistaken for
+//     the start-up payload.
 //  3. On every `aisb`, aisb delivers the current rule set (per-project + universal
 //     allowlists, inject rules) via --write-rules. The rule set carries no
 //     secret values, so it needs no store unlock. The serving process watches
@@ -33,6 +38,7 @@ func die(msg string, args ...any) {
 
 const (
 	payloadPath = "/run/aisb/payload.json" // secrets + CA, delivered once
+	secretsPath = "/run/aisb/secrets.json" // refreshed secrets, delivered on change
 	rulesDir    = "/run/aisb/rules.d"      // one rule file per project, delivered per aisb
 )
 
@@ -43,6 +49,9 @@ func main() {
 		switch os.Args[1] {
 		case "--write-payload":
 			writeFile(payloadPath, os.Stdin)
+			return
+		case "--write-secrets":
+			writeFile(secretsPath, os.Stdin)
 			return
 		case "--write-rules":
 			// `--write-rules <key>`: store this project's rule file as
@@ -78,14 +87,24 @@ func sanitizeKey(s string) string {
 	return string(out)
 }
 
-// writeFile copies r to path with 0600 perms.
+// writeFile copies r to path with 0600 perms. It writes a temporary file in
+// the same directory and renames it into place, so a watcher polling path
+// never reads a half-written file.
 func writeFile(path string, r io.Reader) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	f, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
 	if err != nil {
 		die("write file", "path", path, "err", err)
 	}
-	defer f.Close()
-	if _, err := io.Copy(f, r); err != nil {
+	tmp := f.Name()
+	_, err = io.Copy(f, r)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmp, path)
+	}
+	if err != nil {
+		_ = os.Remove(tmp)
 		die("write file", "path", path, "err", err)
 	}
 }
@@ -100,6 +119,10 @@ func serve() {
 		die("building proxy", "err", err)
 	}
 	go watchRules(srv)
+	go watchSecrets(secretsPath, 500*time.Millisecond, nil, func(secrets map[string]string) {
+		srv.UpdateSecrets(secrets)
+		slog.Info("secrets updated", "count", len(secrets))
+	})
 
 	addr := ":8080"
 	slog.Info("listening", "addr", addr)
@@ -113,20 +136,48 @@ func serve() {
 func waitForSecrets(timeout time.Duration) (*secretsInput, error) {
 	deadline := time.Now().Add(timeout)
 	for {
-		f, err := os.Open(payloadPath)
-		if err == nil {
-			in, perr := readSecrets(f)
-			f.Close()
-			if perr != nil {
-				return nil, perr
-			}
-			_ = os.Remove(payloadPath)
-			return in, nil
+		in, err := takePayload(payloadPath)
+		if err == nil || !os.IsNotExist(err) {
+			return in, err
 		}
 		if time.Now().After(deadline) {
 			return nil, err
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// takePayload reads and parses the payload at path, then unlinks it whether or
+// not it parsed, so plaintext secrets never linger and a bad payload is not
+// retried forever. A missing file returns an os.IsNotExist error.
+func takePayload(path string) (*secretsInput, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	in, err := readSecrets(f)
+	f.Close()
+	_ = os.Remove(path)
+	return in, err
+}
+
+// watchSecrets polls path every interval and hands the secrets of each new
+// payload to apply, until stop is closed (nil: forever). A payload that does
+// not parse is logged and dropped; the secrets in use stay as they were.
+func watchSecrets(path string, every time.Duration, stop <-chan struct{}, apply func(map[string]string)) {
+	for {
+		in, err := takePayload(path)
+		switch {
+		case err == nil:
+			apply(in.Secrets)
+		case !os.IsNotExist(err):
+			slog.Error("bad secrets payload, keeping current secrets", "err", err)
+		}
+		select {
+		case <-stop:
+			return
+		case <-time.After(every):
+		}
 	}
 }
 

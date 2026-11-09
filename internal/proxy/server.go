@@ -21,13 +21,13 @@ func hostOnly(host string) string {
 	return host
 }
 
-// Server is the credential-injecting egress proxy. It holds the secret values
-// fixed for its lifetime (set at construction) and a rule set that can be
-// hot-swapped at runtime via UpdateRules, so per-project allowlists can change
-// as sandboxes come and go without restarting the proxy or re-reading secrets.
+// Server is the credential-injecting egress proxy. Both its secret values and
+// its rule set can be hot-swapped at runtime (UpdateSecrets, UpdateRules), so
+// a refreshed token or a changed allowlist takes effect on the next request
+// without restarting the proxy.
 type Server struct {
 	proxy   *goproxy.ProxyHttpServer
-	secrets map[string]string
+	secrets atomic.Pointer[map[string]string]
 	rules   atomic.Pointer[compiledRules]
 
 	log *slog.Logger
@@ -51,13 +51,13 @@ func New(secrets map[string]string, caCertPEM, caKeyPEM []byte) (*Server, error)
 	tlsCfg := goproxy.TLSConfigFromCA(&caCert)
 
 	s := &Server{
-		proxy:   goproxy.NewProxyHttpServer(),
-		secrets: secrets,
-		log:     slog.Default(),
-		mitm:    &goproxy.ConnectAction{Action: goproxy.ConnectMitm, TLSConfig: tlsCfg},
-		tunnel:  &goproxy.ConnectAction{Action: goproxy.ConnectAccept, TLSConfig: tlsCfg},
-		reject:  &goproxy.ConnectAction{Action: goproxy.ConnectReject, TLSConfig: tlsCfg},
+		proxy:  goproxy.NewProxyHttpServer(),
+		log:    slog.Default(),
+		mitm:   &goproxy.ConnectAction{Action: goproxy.ConnectMitm, TLSConfig: tlsCfg},
+		tunnel: &goproxy.ConnectAction{Action: goproxy.ConnectAccept, TLSConfig: tlsCfg},
+		reject: &goproxy.ConnectAction{Action: goproxy.ConnectReject, TLSConfig: tlsCfg},
 	}
+	s.UpdateSecrets(secrets)
 	empty, _ := compile(RuleSet{})
 	s.rules.Store(empty)
 	s.proxy.Verbose = false
@@ -103,7 +103,7 @@ func New(secrets map[string]string, caCertPEM, caKeyPEM []byte) (*Server, error)
 			return req, goproxy.NewResponse(req, goproxy.ContentTypeText,
 				http.StatusForbidden, "aisb-proxy: host not in allowlist\n")
 		}
-		NewInjector(c.injectRules(), s.secrets).Apply(req)
+		NewInjector(c.injectRules(), *s.secrets.Load()).Apply(req)
 		return req, nil
 	})
 
@@ -121,6 +121,17 @@ func (s *Server) UpdateRules(rs RuleSet) error {
 	}
 	s.rules.Store(c)
 	return nil
+}
+
+// UpdateSecrets atomically replaces the secret values used for injection. The
+// map is copied, so the caller may reuse it. Requests already past the
+// injector keep the value they read; every later request sees the new one.
+func (s *Server) UpdateSecrets(secrets map[string]string) {
+	cp := make(map[string]string, len(secrets))
+	for k, v := range secrets {
+		cp[k] = v
+	}
+	s.secrets.Store(&cp)
 }
 
 // Handler exposes the proxy as an http.Handler (used by tests and main).
