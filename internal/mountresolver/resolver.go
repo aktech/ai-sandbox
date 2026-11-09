@@ -45,7 +45,55 @@ type Warner interface {
 // expected to come from config; this package does not supply defaults.
 func Resolve(mounts, extraMounts []string, env Env, log Warner) []string {
 	all := append(expandAll(mounts, env), expandAll(extraMounts, env)...)
-	return filterExisting(dedupeByDest(all), log)
+	return filterUnsafe(filterExisting(dedupeByDest(all), log), log)
+}
+
+// systemRoots may never be bind-mounted themselves; systemTrees may not be
+// mounted at all, nor anything below them. Everything else (any directory in
+// or outside $HOME, e.g. /private/tmp/x, /Volumes/disk/x, /opt/x) is allowed.
+var (
+	systemRoots = []string{"/", "/bin", "/sbin", "/lib", "/lib64", "/usr", "/var", "/opt",
+		"/home", "/root", "/srv", "/mnt", "/media", "/tmp", "/Users", "/Volumes",
+		"/Applications", "/Library", "/private", "/private/var", "/private/tmp"}
+	systemTrees = []string{"/etc", "/private/etc", "/proc", "/sys", "/dev", "/boot", "/run",
+		"/var/run", "/private/var/run", "/System"}
+)
+
+// unsafeSource reports whether src (or what it resolves to through symlinks)
+// is the host root or a system directory.
+func unsafeSource(src string) bool {
+	paths := []string{filepath.Clean(src)}
+	if real, err := filepath.EvalSymlinks(src); err == nil {
+		paths = append(paths, real)
+	}
+	for _, p := range paths {
+		for _, r := range systemRoots {
+			if p == r {
+				return true
+			}
+		}
+		for _, t := range systemTrees {
+			if p == t || strings.HasPrefix(p, t+"/") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func filterUnsafe(specs []string, log Warner) []string {
+	out := make([]string, 0, len(specs))
+	for _, spec := range specs {
+		src, _, _ := strings.Cut(spec, ":")
+		if unsafeSource(src) {
+			if log != nil {
+				log.Warn("skip mount of a system path: " + src)
+			}
+			continue
+		}
+		out = append(out, spec)
+	}
+	return out
 }
 
 func expandAll(in []string, env Env) []string {

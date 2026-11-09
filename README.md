@@ -146,6 +146,16 @@ Placeholders: `{{HOME}}`, `{{CWD}}`, `{{SHARED_DIR}}`. Shell-style `~/`
 and `$VAR` also work, on both sides of a `src:dest` entry. Paths that
 don't exist on the host are skipped with a warning.
 
+Projects and mounts can be any existing directory, inside or outside your home
+(`/private/tmp/x`, `/Volumes/disk/x`, `/opt/x`). The host root and system
+directories (`/etc`, `/usr`, `/dev`, `/proc`, and so on) are skipped with a
+warning. A Docker that runs in a VM only sees the host paths that VM shares:
+colima shares just your home directory by default, so to use a project
+elsewhere add it to the `mounts` list in colima's config (`colima stop`, then
+`colima start --edit`), keeping your home directory listed too. If you don't,
+`aisb` stops with docker's "bind source path does not exist" and names the
+paths to add.
+
 ## Environment overrides
 
 | Var                 | Default                              |

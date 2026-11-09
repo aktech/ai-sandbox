@@ -272,7 +272,33 @@ func (h Handler) create(name string, c cfg.Effective, home, cwd string, extraLab
 		return err
 	}
 	spec := buildSpec(name, c, home, cwd, extraLabels, h.caHostPath, h.Log)
-	return dx.Create(h.Docker, spec)
+	if err := dx.Create(h.Docker, spec); err != nil {
+		return explainMountsOutsideHome(err, spec.Mounts, home)
+	}
+	return nil
+}
+
+// explainMountsOutsideHome adds a hint to a failed `docker run` when any bind
+// source lies outside home. aisb mounts any existing directory, but a Docker
+// that runs in a VM (colima, Docker Desktop) only sees the host paths the VM
+// shares, and colima shares just $HOME by default; docker then reports that
+// the bind source path does not exist.
+func explainMountsOutsideHome(err error, mounts []string, home string) error {
+	var outside []string
+	for _, m := range mounts {
+		src, _, _ := strings.Cut(m, ":")
+		if rel, rerr := filepath.Rel(home, src); rerr != nil || rel == ".." || strings.HasPrefix(rel, "../") {
+			outside = append(outside, src)
+		}
+	}
+	if len(outside) == 0 {
+		return err
+	}
+	return fmt.Errorf("%w\nthese mounts are outside your home directory: %s\n"+
+		"If docker said a bind source path does not exist, your Docker runs in a VM that does not share "+
+		"those paths. With colima (which shares only $HOME by default), add each one to the `mounts` "+
+		"list in its config, keeping your home directory listed too: `colima stop`, `colima start --edit`",
+		err, strings.Join(outside, ", "))
 }
 
 // caInContainer is where the proxy's CA cert is mounted inside the sandbox.

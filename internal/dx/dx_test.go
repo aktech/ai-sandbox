@@ -334,3 +334,31 @@ func TestShell_PassesColourSupport(t *testing.T) {
 		}
 	}
 }
+
+// Bind mounts are passed with --mount, not -v: for a source the Docker daemon
+// cannot see (a host path outside what a VM-based runtime such as colima
+// shares), -v silently creates an empty directory and mounts that, while
+// --mount fails with "bind source path does not exist". A ":ro" suffix keeps
+// the mount read-only.
+func TestCreate_BindMountsFailLoudlyWhenSourceMissing(t *testing.T) {
+	r := &recorder{}
+	err := Create(r, ContainerSpec{Name: "aisb-x", Image: "img", Memory: "4g", CPUs: "2",
+		Mounts: []string{"/private/tmp/proj:/private/tmp/proj", "/host/ca.crt:/etc/aisb/ca.crt:ro", "/a,b:/c",
+			"/sel:/sel:z"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only a spec with options --mount has no equivalent for stays on -v.
+	if got := argPairs(r.args, "-v"); len(got) != 1 || got[0] != "/sel:/sel:z" {
+		t.Fatalf("-v used for %v; want only /sel:/sel:z (-v hides a missing source behind an empty dir)", got)
+	}
+	got := argPairs(r.args, "--mount")
+	want := []string{
+		"type=bind,source=/private/tmp/proj,target=/private/tmp/proj",
+		"type=bind,source=/host/ca.crt,target=/etc/aisb/ca.crt,readonly",
+		`type=bind,"source=/a,b",target=/c`,
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("--mount values:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}

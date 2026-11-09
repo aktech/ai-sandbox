@@ -2,6 +2,9 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -91,5 +94,45 @@ func TestBuildSpec_Proxy_UsesSentinelAndInternalNet(t *testing.T) {
 	}
 	if spec.Env["SSL_CERT_FILE"] == "" || spec.Env["NODE_EXTRA_CA_CERTS"] == "" {
 		t.Fatal("CA env vars must point at the mounted cert")
+	}
+}
+
+// runFails is a dx.Executor where every image exists, no container exists yet
+// and `docker run` fails.
+type runFails struct{}
+
+func (runFails) Output(...string) (string, error)     { return "", nil }
+func (runFails) Run(...string) error                  { return errors.New("exit status 125") }
+func (runFails) RunSilent(...string) error            { return nil }
+func (runFails) Replace(...string) error              { return nil }
+func (runFails) RunWithStdin([]byte, ...string) error { return nil }
+
+// A project outside $HOME (e.g. under /private/tmp or /Volumes) is mounted
+// like any other. When creating the container fails, the error names the
+// mounts outside $HOME and says how to share them with a VM-based Docker
+// (colima shares only $HOME by default), since that is the usual cause.
+func TestCreate_FailureExplainsMountsOutsideHome(t *testing.T) {
+	home, outside := t.TempDir(), t.TempDir()
+	c := cfg.Effective{Image: "img", Memory: "4g", CPUs: "2", SharedDir: filepath.Join(home, "sh"),
+		Mounts: []string{"{{CWD}}"}}
+	h := Handler{Log: &captureLog{}, Docker: runFails{}}
+
+	err := h.Create("aisb-x", c, home, outside, nil)
+	if err == nil {
+		t.Fatal("Create succeeded though docker run failed")
+	}
+	for _, want := range []string{outside, "outside your home", "colima"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+
+	inside := filepath.Join(home, "proj")
+	if err := os.MkdirAll(inside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err = h.Create("aisb-y", c, home, inside, nil)
+	if err == nil || strings.Contains(err.Error(), "outside your home") {
+		t.Fatalf("project inside $HOME: error = %v, want docker's failure without the sharing hint", err)
 	}
 }

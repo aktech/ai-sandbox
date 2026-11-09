@@ -7,6 +7,7 @@ package dx
 
 import (
 	"bytes"
+	"encoding/csv"
 	"fmt"
 	"os"
 	"os/exec"
@@ -225,13 +226,37 @@ func Create(e Executor, s ContainerSpec) error {
 		args = append(args, "-e", k+"="+v)
 	}
 	for _, m := range s.Mounts {
-		args = append(args, "-v", m)
+		flag, value := mountFlag(m)
+		args = append(args, flag, value)
 	}
 	for _, p := range s.Ports {
 		args = append(args, "-p", p)
 	}
 	args = append(args, s.Image)
 	return e.Run(args...)
+}
+
+// mountFlag turns a "src:dest[:ro|:rw]" spec into a --mount flag. Unlike -v,
+// --mount refuses a source the Docker daemon cannot see instead of creating an
+// empty directory there and mounting that. docker parses the value as CSV, so
+// a field holding a comma or quote is quoted. A spec with other -v options
+// (e.g. ":z") is passed to -v unchanged so it keeps working.
+func mountFlag(spec string) (flag, value string) {
+	src, dst, _ := strings.Cut(spec, ":")
+	dst, opt, _ := strings.Cut(dst, ":")
+	fields := []string{"type=bind", "source=" + src, "target=" + dst}
+	switch opt {
+	case "", "rw":
+	case "ro":
+		fields = append(fields, "readonly")
+	default:
+		return "-v", spec
+	}
+	var b strings.Builder
+	w := csv.NewWriter(&b)
+	_ = w.Write(fields)
+	w.Flush()
+	return "--mount", strings.TrimSuffix(b.String(), "\n")
 }
 
 // gpusFlag quotes a "device=" list so docker's CSV parser keeps it as one
