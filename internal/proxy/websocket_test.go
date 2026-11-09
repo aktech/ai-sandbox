@@ -92,7 +92,7 @@ func TestServer_WebSocketThroughMitmInjectsOnUpgrade(t *testing.T) {
 	defer up.Close()
 	upHost := up.Listener.Addr().String()
 	ts, caCert := wsProxy(t, RuleSet{
-		Projects: []Subnet{{CIDR: "127.0.0.0/8", Allow: []string{hostOnly(upHost)}}},
+		Projects: []Subnet{{CIDR: "127.0.0.0/8", Allow: []string{upHost}}},
 		Inject:   map[string]InjectRule{hostOnly(upHost): {Header: "Authorization", Secret: "openai", Format: "Bearer %s"}},
 	}, up)
 
@@ -108,7 +108,7 @@ func TestServer_WebSocketThroughTunnel(t *testing.T) {
 	defer up.Close()
 	upHost := up.Listener.Addr().String()
 	ts, _ := wsProxy(t, RuleSet{
-		Projects: []Subnet{{CIDR: "127.0.0.0/8", Allow: []string{hostOnly(upHost)}}},
+		Projects: []Subnet{{CIDR: "127.0.0.0/8", Allow: []string{upHost}}},
 	}, up)
 
 	raw, err := net.Dial("tcp", ts.Listener.Addr().String())
@@ -135,7 +135,7 @@ func TestServer_PlainWebSocketInjectsOnUpgrade(t *testing.T) {
 	defer up.Close()
 	upHost := up.Listener.Addr().String()
 	ts, _ := wsProxy(t, RuleSet{
-		Projects: []Subnet{{CIDR: "127.0.0.0/8", Allow: []string{hostOnly(upHost)}}},
+		Projects: []Subnet{{CIDR: "127.0.0.0/8", Allow: []string{upHost}}},
 		Inject:   map[string]InjectRule{hostOnly(upHost): {Header: "Authorization", Secret: "openai", Format: "Bearer %s"}},
 	})
 

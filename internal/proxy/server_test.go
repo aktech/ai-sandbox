@@ -48,7 +48,7 @@ func TestServer_AllowedHostInjectsHeader(t *testing.T) {
 	// The httptest client connects from 127.0.0.1, so a 127/8 project rule
 	// applies. The inject rule makes the proxy MITM + swap the header.
 	if err := srv.UpdateRules(RuleSet{
-		Projects: []Subnet{{CIDR: "127.0.0.0/8", Allow: []string{hostOnly(upHost)}}},
+		Projects: []Subnet{{CIDR: "127.0.0.0/8", Allow: []string{upHost}}},
 		Inject:   map[string]InjectRule{hostOnly(upHost): {Header: "x-api-key", Secret: "anthropic"}},
 	}); err != nil {
 		t.Fatal(err)
@@ -92,7 +92,7 @@ func TestServer_AllowOnlyHostIsTunneledNotMitmed(t *testing.T) {
 	}
 	// Allowed (bare host) via a 127/8 project rule, but no inject rule.
 	if err := srv.UpdateRules(RuleSet{
-		Projects: []Subnet{{CIDR: "127.0.0.0/8", Allow: []string{hostOnly(upHost)}}},
+		Projects: []Subnet{{CIDR: "127.0.0.0/8", Allow: []string{upHost}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestServer_NoPlaceholderGetsNoCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := srv.UpdateRules(RuleSet{
-		Projects: []Subnet{{CIDR: "127.0.0.0/8", Allow: []string{hostOnly(upHost)}}},
+		Projects: []Subnet{{CIDR: "127.0.0.0/8", Allow: []string{upHost}}},
 		Inject:   map[string]InjectRule{hostOnly(upHost): {Header: "x-api-key", Secret: "anthropic"}},
 	}); err != nil {
 		t.Fatal(err)
@@ -220,7 +220,7 @@ func TestServer_MitmRequestForOtherHostRefused(t *testing.T) {
 	caCert, caKey, _ := ca.Generate("test")
 	srv, _ := New(map[string]string{"anthropic": "REALKEY"}, caCert, caKey)
 	_ = srv.UpdateRules(RuleSet{
-		Projects: []Subnet{{CIDR: "127.0.0.0/8", Allow: []string{"localhost"}}},
+		Projects: []Subnet{{CIDR: "127.0.0.0/8", Allow: []string{injHost}}},
 		Inject:   map[string]InjectRule{"localhost": {Header: "x-api-key", Secret: "anthropic"}},
 	})
 	pool := x509.NewCertPool()
@@ -268,7 +268,7 @@ func TestServer_UpdateSecretsTakesEffectLive(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = srv.UpdateRules(RuleSet{
-		Projects: []Subnet{{CIDR: "127.0.0.0/8", Allow: []string{hostOnly(upHost)}}},
+		Projects: []Subnet{{CIDR: "127.0.0.0/8", Allow: []string{upHost}}},
 		Inject:   map[string]InjectRule{hostOnly(upHost): {Header: "x-api-key", Secret: "anthropic"}},
 	})
 	upPool := x509.NewCertPool()

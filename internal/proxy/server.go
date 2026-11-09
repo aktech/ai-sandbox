@@ -13,14 +13,6 @@ import (
 	"github.com/elazarl/goproxy"
 )
 
-// hostOnly strips an optional ":port" suffix.
-func hostOnly(host string) string {
-	if i := strings.LastIndexByte(host, ':'); i >= 0 {
-		return host[:i]
-	}
-	return host
-}
-
 // Server is the credential-injecting egress proxy. Both its secret values and
 // its rule set can be hot-swapped at runtime (UpdateSecrets, UpdateRules), so
 // a refreshed token or a changed allowlist takes effect on the next request

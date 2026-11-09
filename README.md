@@ -243,6 +243,9 @@ saying which hosts sandboxes may reach and where each key goes:
 - `allow` is default-deny: only listed hosts are reachable. `*.` matches any
   subdomain depth; a plain entry matches that exact host. A host you inject
   into is allowed automatically.
+- Entries are port-aware. `host` reaches ports 80 and 443 only, `host:5432`
+  reaches that one port, and `host:*` reaches any port. Write IPv6 addresses
+  bare (`2001:db8::1`) or bracketed with a port (`[2001:db8::1]:8443`).
 - `inject` says which header to rewrite per host. `format` wraps the value
   (e.g. `Bearer %s`); `basic` handles `git push` over HTTPS, which sends the
   token as the password half of a Basic-auth header.
