@@ -339,3 +339,24 @@ func TestServer_PlainHTTPGetsNoSecret(t *testing.T) {
 		t.Fatalf("upstream saw x-api-key=%q over plain HTTP, want the placeholder", string(body))
 	}
 }
+
+// The proxy port serves proxy traffic only: a direct request to it (an admin
+// or debug path, say) gets no page and no secret.
+func TestServer_DirectRequestsGetNothing(t *testing.T) {
+	caCert, caKey, _ := ca.Generate("test")
+	srv, _ := New(map[string]string{"anthropic": "REALKEY"}, caCert, caKey)
+	_ = srv.UpdateRules(RuleSet{Projects: []Subnet{{CIDR: "127.0.0.0/8", Allow: []string{"*"}}}})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+	for _, p := range []string{"/", "/debug/pprof/", "/metrics", "/secrets", "/run/aisb/payload.json"} {
+		resp, err := http.Get(ts.URL + p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode < 400 || strings.Contains(string(body), "REALKEY") {
+			t.Errorf("GET %s on the proxy port: status %d body %q, want an error and no secret", p, resp.StatusCode, body)
+		}
+	}
+}
