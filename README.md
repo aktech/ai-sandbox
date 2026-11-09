@@ -267,7 +267,11 @@ project's rules are isolated from the others.
   project only.
 - A per-project `"proxy": { "allow": [...] }` block adds more hosts for that
   project. Use `"allow": ["*"]` to make a project **unrestricted** (reach any
-  host). Even an unrestricted project still has its secrets injected and kept
+  host on the internet). `*` does not cover addresses on your own machine or
+  network: loopback, private ranges (10/8, 172.16/12, 192.168/16, 100.64/10,
+  fc00::/7), link-local (including cloud metadata at 169.254.169.254) and other
+  sandboxes stay unreachable, whether named by IP or by a name that resolves
+  there. List such a host explicitly (e.g. `"nas.lan:8080"`) to reach it. Even an unrestricted project still has its secrets injected and kept
   out of the container; only the egress limits are lifted.
 
 Secrets update live too: `aisb secret set` and `aisb secret rm` hand the new

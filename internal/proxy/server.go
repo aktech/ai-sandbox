@@ -1,10 +1,12 @@
 package proxy
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -48,6 +50,18 @@ func New(secrets map[string]string, caCertPEM, caKeyPEM []byte) (*Server, error)
 		mitm:   &goproxy.ConnectAction{Action: goproxy.ConnectMitm, TLSConfig: tlsCfg},
 		tunnel: &goproxy.ConnectAction{Action: goproxy.ConnectAccept, TLSConfig: tlsCfg},
 		reject: &goproxy.ConnectAction{Action: goproxy.ConnectReject, TLSConfig: tlsCfg},
+	}
+	// Every upstream connection goes through guardedDial. A request carries
+	// whether its host is allowed only by "*" (set in the request handler
+	// below); one that does not say is treated as wildcard-only.
+	s.proxy.Tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		wildcard, ok := ctx.Value(ctxKey{}).(bool)
+		return guardedDial(ctx, network, addr, wildcard || !ok)
+	}
+	s.proxy.ConnectDial = nil
+	s.proxy.ConnectDialWithReq = func(req *http.Request, network, addr string) (net.Conn, error) {
+		explicit := s.rules.Load().allowlistFor(req.RemoteAddr).Explicit(addr)
+		return guardedDial(req.Context(), network, addr, !explicit)
 	}
 	s.UpdateSecrets(secrets)
 	empty, _ := compile(RuleSet{})
@@ -95,6 +109,8 @@ func New(secrets map[string]string, caCertPEM, caKeyPEM []byte) (*Server, error)
 			return req, goproxy.NewResponse(req, goproxy.ContentTypeText,
 				http.StatusForbidden, "aisb-proxy: host not in allowlist\n")
 		}
+		req = req.WithContext(withWildcardOnly(req.Context(),
+			!c.allowlistFor(req.RemoteAddr).Explicit(req.URL.Host)))
 		NewInjector(c.injectRules(), *s.secrets.Load()).Apply(req)
 		return req, nil
 	})
