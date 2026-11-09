@@ -1,12 +1,16 @@
 package proxy
 
 import (
+	"bufio"
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/aktech/ai-sandbox/internal/ca"
@@ -131,5 +135,119 @@ func TestServer_DeniedHostRefused(t *testing.T) {
 	_, err := client.Get("https://denied.example/")
 	if err == nil {
 		t.Fatal("expected error reaching denied host, got nil")
+	}
+}
+
+// End to end: a request to an inject host that carries no placeholder must
+// reach the upstream without any credential added by the proxy.
+func TestServer_NoPlaceholderGetsNoCredential(t *testing.T) {
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, r.Header.Get("x-api-key"))
+	}))
+	defer upstream.Close()
+	upHost := upstream.Listener.Addr().String()
+
+	caCert, caKey, _ := ca.Generate("test")
+	srv, err := New(map[string]string{"anthropic": "REALKEY"}, caCert, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.UpdateRules(RuleSet{
+		Projects: []Subnet{{CIDR: "127.0.0.0/8", Allow: []string{hostOnly(upHost)}}},
+		Inject:   map[string]InjectRule{hostOnly(upHost): {Header: "x-api-key", Secret: "anthropic"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	upPool := x509.NewCertPool()
+	upPool.AddCert(upstream.Certificate())
+	srv.TrustUpstreamRoots(upPool)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := newClient(t, ts.URL, caCert).Get("https://" + upHost + "/")
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != "" {
+		t.Fatalf("upstream saw x-api-key=%q, want none (no placeholder was sent)", string(body))
+	}
+}
+
+// mitmConn opens a CONNECT tunnel to target through the proxy at proxyAddr and
+// completes TLS against the proxy's minted cert, returning a conn the caller
+// can write raw HTTP/1.1 requests to.
+func mitmConn(t *testing.T, proxyAddr, target string, caCertPEM []byte) *tls.Conn {
+	t.Helper()
+	raw, err := net.Dial("tcp", proxyAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprintf(raw, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", target, target)
+	br := bufio.NewReader(raw)
+	resp, err := http.ReadResponse(br, nil)
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("CONNECT %s: resp=%v err=%v", target, resp, err)
+	}
+	pool := x509.NewCertPool()
+	pool.AppendCertsFromPEM(caCertPEM)
+	c := tls.Client(raw, &tls.Config{RootCAs: pool, ServerName: hostOnly(target)})
+	if err := c.Handshake(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.Close() })
+	return c
+}
+
+// Inside a MITM'd tunnel to an inject host, a request naming a different host
+// (absolute-form URL, or a Host header that disagrees with the tunnel) must be
+// refused: it must neither reach that host nor carry the injected secret there.
+func TestServer_MitmRequestForOtherHostRefused(t *testing.T) {
+	hits := make(chan string, 4)
+	other := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits <- r.Header.Get("x-api-key")
+	}))
+	defer other.Close()
+	inj := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits <- r.Host + " " + r.Header.Get("x-api-key")
+	}))
+	defer inj.Close()
+	// Two names for loopback so the inject host and the other host differ:
+	// only "localhost" is allowed (and injected); 127.0.0.1 is not.
+	injHost := "localhost:" + strings.Split(inj.Listener.Addr().String(), ":")[1]
+
+	caCert, caKey, _ := ca.Generate("test")
+	srv, _ := New(map[string]string{"anthropic": "REALKEY"}, caCert, caKey)
+	_ = srv.UpdateRules(RuleSet{
+		Projects: []Subnet{{CIDR: "127.0.0.0/8", Allow: []string{"localhost"}}},
+		Inject:   map[string]InjectRule{"localhost": {Header: "x-api-key", Secret: "anthropic"}},
+	})
+	pool := x509.NewCertPool()
+	pool.AddCert(inj.Certificate())
+	pool.AddCert(other.Certificate())
+	srv.TrustUpstreamRoots(pool)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+	otherAddr := other.Listener.Addr().String()
+
+	for _, raw := range []string{
+		"GET https://" + otherAddr + "/ HTTP/1.1\r\nHost: " + otherAddr + "\r\nx-api-key: " + Sentinel("anthropic") + "\r\n\r\n",
+		"GET / HTTP/1.1\r\nHost: evil.example\r\nx-api-key: " + Sentinel("anthropic") + "\r\n\r\n",
+	} {
+		c := mitmConn(t, ts.Listener.Addr().String(), injHost, caCert)
+		io.WriteString(c, raw)
+		resp, err := http.ReadResponse(bufio.NewReader(c), nil)
+		if err != nil {
+			t.Fatalf("read response: %v", err)
+		}
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("request %q: status %d, want 403", strings.SplitN(raw, "\r\n", 3)[:2], resp.StatusCode)
+		}
+		select {
+		case h := <-hits:
+			t.Errorf("request %q reached an upstream (saw %q)", strings.SplitN(raw, "\r\n", 3)[:2], h)
+		default:
+		}
 	}
 }

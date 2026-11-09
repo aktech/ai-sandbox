@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync/atomic"
 
@@ -82,19 +83,25 @@ func New(secrets map[string]string, caCertPEM, caKeyPEM []byte) (*Server, error)
 		return s.tunnel, host
 	})
 
-	// Plain HTTP (no CONNECT) is gated here by source. Injection runs for both
-	// plain HTTP and MITM'd HTTPS; for HTTPS the CONNECT gate already enforced
-	// the allowlist, so we do not re-deny here (the MITM'd request carries no
-	// usable source address).
+	// Every request (plain HTTP and each request inside a MITM'd tunnel) is
+	// gated here by source. A MITM'd request can name any host in its URL or
+	// Host header regardless of the tunnel it arrived on, so the CONNECT gate
+	// alone is not enough: re-check the allowlist on the request's own host,
+	// and refuse a Host header that disagrees with the URL, so an injected
+	// secret only ever goes to the host its rule names.
 	s.proxy.OnRequest().DoFunc(func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
 		c := s.rules.Load()
-		if req.URL.Scheme == "http" {
-			if !c.allowlistFor(req.RemoteAddr).Allowed(req.URL.Host) {
-				s.log.Info("request", "decision", "deny", "method", req.Method,
-					"host", req.URL.Host, "src", req.RemoteAddr)
-				return req, goproxy.NewResponse(req, goproxy.ContentTypeText,
-					http.StatusForbidden, "aisb-proxy: host not in allowlist\n")
-			}
+		if req.Host != "" && !strings.EqualFold((&url.URL{Host: req.Host}).Hostname(), req.URL.Hostname()) {
+			s.log.Info("request", "decision", "deny", "reason", "host header mismatch", "method", req.Method,
+				"host", req.URL.Host, "host_header", req.Host, "src", req.RemoteAddr)
+			return req, goproxy.NewResponse(req, goproxy.ContentTypeText,
+				http.StatusForbidden, "aisb-proxy: Host header does not match the request URL\n")
+		}
+		if !c.allowlistFor(req.RemoteAddr).Allowed(req.URL.Host) {
+			s.log.Info("request", "decision", "deny", "method", req.Method,
+				"host", req.URL.Host, "src", req.RemoteAddr)
+			return req, goproxy.NewResponse(req, goproxy.ContentTypeText,
+				http.StatusForbidden, "aisb-proxy: host not in allowlist\n")
 		}
 		NewInjector(c.injectRules(), s.secrets).Apply(req)
 		return req, nil

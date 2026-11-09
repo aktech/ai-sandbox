@@ -31,7 +31,8 @@ func NewInjector(rules map[string]InjectRule, secrets map[string]string) *Inject
 	return &Injector{rules: rules, secrets: secrets}
 }
 
-// Apply rewrites req's auth header in place if a rule matches its host.
+// Apply swaps the placeholder in req's auth header for the real secret, in
+// place, when a rule matches its host and the header carries the placeholder.
 func (i *Injector) Apply(req *http.Request) {
 	host := req.URL.Hostname()
 	rule, ok := i.rules[host]
@@ -60,6 +61,14 @@ func (i *Injector) Apply(req *http.Request) {
 		return
 	}
 
+	// Only a header that carries this secret's placeholder is rewritten, and
+	// then replaced whole (the placeholder may sit inside a fake token shaped
+	// like the real one). A request without it (no header, or the agent's own
+	// value) passes through untouched: the proxy never adds a credential
+	// nobody asked for.
+	if !strings.Contains(req.Header.Get(rule.Header), sentinel) {
+		return
+	}
 	value := real
 	if rule.Format != "" {
 		value = fmt.Sprintf(rule.Format, real)
