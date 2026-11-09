@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"errors"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -152,5 +153,74 @@ func TestCheckProxyImage(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), c.wantErr) || !strings.Contains(err.Error(), "aisb build") {
 			t.Errorf("%s: error = %v, want it to say %q and `aisb build`", c.name, err, c.wantErr)
 		}
+	}
+}
+
+// removeRecorder reports the containers in running as existing and records
+// `docker rm` targets.
+type removeRecorder struct{ running, removed []string }
+
+func (r *removeRecorder) Output(args ...string) (string, error) {
+	if len(args) > 0 && args[0] == "ps" {
+		return strings.Join(r.running, "\n"), nil
+	}
+	return "", nil
+}
+func (r *removeRecorder) Run(...string) error { return nil }
+func (r *removeRecorder) RunSilent(args ...string) error {
+	if len(args) > 2 && args[0] == "rm" {
+		r.removed = append(r.removed, args[len(args)-1])
+	}
+	return nil
+}
+func (r *removeRecorder) Replace(...string) error              { return nil }
+func (r *removeRecorder) RunWithStdin([]byte, ...string) error { return nil }
+
+// The proxy's name (container, and the host name sandboxes reach it by) is
+// "aisb-proxy" for the default config, can be set with AISB_PROXY_NAME, and
+// otherwise differs per config directory, so two setups (separate secret
+// stores) never share, stop or reconfigure one another's proxy.
+func TestProxyName_DefaultOverrideAndPerConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	c := cfg.Effective{Image: "img", Memory: "4g", CPUs: "2", SharedDir: "/sh",
+		Proxy: &cfg.ProxyBlock{Allow: []string{"example.com"}}}
+	nameUsed := func() (spec, stopped string) {
+		t.Helper()
+		s := buildSpec("aisb-foo", c, home, "/work", nil, "/host/ca.crt", noopWarner{})
+		spec = strings.TrimSuffix(strings.TrimPrefix(s.Env["HTTPS_PROXY"], "http://"), ":8080")
+		// Another setup's proxy runs alongside; stop must leave it alone.
+		r := &removeRecorder{running: []string{spec, "aisb-proxy-other-setup"}}
+		if err := (Handler{Log: &captureLog{}, Docker: r}).ProxyStop(); err != nil {
+			t.Fatal(err)
+		}
+		return spec, strings.Join(r.removed, ",")
+	}
+
+	t.Setenv("AISB_CONFIG_FILE", "")
+	t.Setenv("AISB_PROXY_NAME", "")
+	if spec, stopped := nameUsed(); spec != "aisb-proxy" || stopped != "aisb-proxy" {
+		t.Fatalf("default config: sandbox uses %q, stop removes %q, want aisb-proxy for both", spec, stopped)
+	}
+
+	t.Setenv("AISB_CONFIG_FILE", filepath.Join(home, ".config", "ai-sandbox", "config.json"))
+	if spec, _ := nameUsed(); spec != "aisb-proxy" {
+		t.Fatalf("default config named explicitly: sandbox uses %q, want aisb-proxy", spec)
+	}
+
+	t.Setenv("AISB_CONFIG_FILE", filepath.Join(t.TempDir(), "config.json"))
+	spec, stopped := nameUsed()
+	if spec == "aisb-proxy" || !strings.HasPrefix(spec, "aisb-proxy-") || stopped != spec {
+		t.Fatalf("other config dir: sandbox uses %q, stop removes %q, want one shared aisb-proxy-<id> name", spec, stopped)
+	}
+
+	t.Setenv("AISB_CONFIG_FILE", filepath.Join(t.TempDir(), "config.json"))
+	if other, _ := nameUsed(); other == spec || !strings.HasPrefix(other, "aisb-proxy-") {
+		t.Fatalf("two config dirs share proxy name %q", other)
+	}
+
+	t.Setenv("AISB_PROXY_NAME", "aisb-proxy-alt")
+	if spec, stopped := nameUsed(); spec != "aisb-proxy-alt" || stopped != "aisb-proxy-alt" {
+		t.Fatalf("AISB_PROXY_NAME: sandbox uses %q, stop removes %q, want aisb-proxy-alt", spec, stopped)
 	}
 }

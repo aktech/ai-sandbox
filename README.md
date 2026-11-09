@@ -158,6 +158,7 @@ don't exist on the host are skipped with a warning.
 | `AISB_CONFIG_FILE`  | `~/.config/ai-sandbox/config.json`   |
 | `ANTHROPIC_API_KEY` | passed through to the container      |
 | `AISB_PROXY_IMAGE`  | `ai-sandbox-proxy:latest`            |
+| `AISB_PROXY_NAME`   | `aisb-proxy` for the default config dir; `aisb-proxy-<id>` for any other `AISB_CONFIG_FILE` dir |
 | `AISB_MASTER_PASSWORD` | unlocks the secret store non-interactively |
 
 ## Keeping credentials out of the sandbox

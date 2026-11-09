@@ -1,9 +1,12 @@
 package cmd
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/aktech/ai-sandbox/internal/cfg"
@@ -11,7 +14,23 @@ import (
 	"github.com/aktech/ai-sandbox/internal/proxy"
 )
 
-const proxyContainer = "aisb-proxy"
+// proxyName is the shared proxy's container name, which is also the host name
+// sandboxes reach it by. AISB_PROXY_NAME sets it. Otherwise the default config
+// directory keeps the historical "aisb-proxy", and any other config directory
+// (AISB_CONFIG_FILE elsewhere, i.e. a separate CA and secret store) gets
+// "aisb-proxy-<id>" derived from that directory, so two setups never share,
+// stop or reconfigure one another's proxy.
+func proxyName() string {
+	if v := os.Getenv("AISB_PROXY_NAME"); v != "" {
+		return v
+	}
+	dir := filepath.Clean(configDir())
+	if dir == filepath.Clean(defaultConfigDir()) {
+		return "aisb-proxy"
+	}
+	sum := sha256.Sum256([]byte(dir))
+	return "aisb-proxy-" + hex.EncodeToString(sum[:])[:8]
+}
 
 // ProxyImage returns the proxy container image, overridable for testing/CI.
 func ProxyImage() string {
@@ -118,7 +137,7 @@ func deliverRules(e dx.Executor, c cfg.Effective, container string) error {
 	if err != nil {
 		return err
 	}
-	return e.RunWithStdin(payload, writeRulesExecArgs(proxyContainer, container)...)
+	return e.RunWithStdin(payload, writeRulesExecArgs(proxyName(), container)...)
 }
 
 // internalNetCreateArgs builds argv to create a sandbox's --internal network.
@@ -172,17 +191,17 @@ func checkProxyImage(e dx.Executor, image, want string) error {
 // fresh payload (CA + secrets + config) takes effect. payload is built by the
 // caller from the decrypted secret store.
 func ensureProxyRunning(e dx.Executor, image string, payload []byte) error {
-	if !dx.ContainerRunning(e, proxyContainer) {
-		if dx.ContainerExists(e, proxyContainer) {
-			_ = dx.Remove(e, proxyContainer)
+	if !dx.ContainerRunning(e, proxyName()) {
+		if dx.ContainerExists(e, proxyName()) {
+			_ = dx.Remove(e, proxyName())
 		}
-		if err := e.RunSilent(proxyRunArgs(proxyContainer, image)...); err != nil {
+		if err := e.RunSilent(proxyRunArgs(proxyName(), image)...); err != nil {
 			return err
 		}
 	}
 	// Deliver the payload over stdin into the proxy's tmpfs. Safe to repeat:
 	// the serving process consumes and unlinks it once.
-	return e.RunWithStdin(payload, writePayloadExecArgs(proxyContainer)...)
+	return e.RunWithStdin(payload, writePayloadExecArgs(proxyName())...)
 }
 
 // setupSandboxNet creates the sandbox's internal network (idempotent) and
@@ -195,19 +214,19 @@ func setupSandboxNet(e dx.Executor, container string) error {
 		}
 	}
 	// Connecting an already-connected proxy returns an error we can ignore.
-	_ = e.RunSilent(netConnectArgs(net, proxyContainer)...)
+	_ = e.RunSilent(netConnectArgs(net, proxyName())...)
 	return nil
 }
 
 // teardownSandboxNet drops the project's proxy rule file, disconnects the proxy
 // and removes the sandbox's network.
 func teardownSandboxNet(e dx.Executor, container string) {
-	if dx.ContainerRunning(e, proxyContainer) {
-		_ = e.RunSilent(rmRulesExecArgs(proxyContainer, container)...)
+	if dx.ContainerRunning(e, proxyName()) {
+		_ = e.RunSilent(rmRulesExecArgs(proxyName(), container)...)
 	}
 	net := networkName(container)
 	if networkExists(e, net) {
-		_ = e.RunSilent(netDisconnectArgs(net, proxyContainer)...)
+		_ = e.RunSilent(netDisconnectArgs(net, proxyName())...)
 		_ = e.RunSilent("network", "rm", net)
 	}
 }

@@ -24,6 +24,11 @@ func configDir() string {
 	if p := os.Getenv("AISB_CONFIG_FILE"); p != "" {
 		return filepath.Dir(p)
 	}
+	return defaultConfigDir()
+}
+
+// defaultConfigDir is the config directory used when AISB_CONFIG_FILE is unset.
+func defaultConfigDir() string {
 	return filepath.Join(os.Getenv("HOME"), ".config", "ai-sandbox")
 }
 
@@ -259,12 +264,12 @@ func (h Handler) saveSecrets(pw []byte, secrets map[string]string) error {
 	if err := secret.Save(secretsPath(), pw, secrets); err != nil {
 		return err
 	}
-	if !dx.ContainerRunning(h.Docker, proxyContainer) {
+	if !dx.ContainerRunning(h.Docker, proxyName()) {
 		return nil
 	}
 	payload, err := json.Marshal(map[string]any{"secrets": secrets})
 	if err == nil {
-		err = h.Docker.RunWithStdin(payload, writeSecretsExecArgs(proxyContainer)...)
+		err = h.Docker.RunWithStdin(payload, writeSecretsExecArgs(proxyName())...)
 	}
 	if err != nil {
 		h.Log.Warn("saved, but could not update the running proxy (" + err.Error() +
@@ -294,11 +299,11 @@ func (h Handler) SecretLS() error {
 
 // ProxyStop removes the shared proxy container.
 func (h Handler) ProxyStop() error {
-	if !dx.ContainerExists(h.Docker, proxyContainer) {
+	if !dx.ContainerExists(h.Docker, proxyName()) {
 		h.Log.Warn("proxy not running")
 		return nil
 	}
-	if err := dx.Remove(h.Docker, proxyContainer); err != nil {
+	if err := dx.Remove(h.Docker, proxyName()); err != nil {
 		return err
 	}
 	h.Log.OK("proxy stopped")
@@ -307,5 +312,5 @@ func (h Handler) ProxyStop() error {
 
 // ProxyLog streams the proxy container's logs.
 func (h Handler) ProxyLog() error {
-	return h.Docker.Run("logs", "-f", proxyContainer)
+	return h.Docker.Run("logs", "-f", proxyName())
 }

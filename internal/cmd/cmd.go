@@ -65,7 +65,7 @@ func (h Handler) ensure(name string, c cfg.Effective, home, cwd string, extraLab
 	// sandbox is prompt-free.
 	if c.Proxy != nil {
 		h.caHostPath = caCertPath()
-		if !dx.ContainerRunning(h.Docker, proxyContainer) {
+		if !dx.ContainerRunning(h.Docker, proxyName()) {
 			if err := checkProxySetUp(); err != nil {
 				return false, err
 			}
@@ -305,7 +305,7 @@ func buildSpec(name string, c cfg.Effective, home, cwd string, extraLabels map[s
 	}
 	// Proxy mode: no real secrets enter the container.
 	spec.Network = networkName(name)
-	proxyURL := "http://" + proxyContainer + ":8080"
+	proxyURL := "http://" + proxyName() + ":8080"
 	env["HTTPS_PROXY"] = proxyURL
 	env["HTTP_PROXY"] = proxyURL
 	env["NO_PROXY"] = "localhost,127.0.0.1"

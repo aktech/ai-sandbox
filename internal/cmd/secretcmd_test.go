@@ -95,7 +95,7 @@ type proxyStub struct {
 
 func (s *proxyStub) Output(args ...string) (string, error) {
 	if s.running && len(args) > 0 && args[0] == "ps" {
-		return proxyContainer + "\n", nil
+		return proxyName() + "\n", nil
 	}
 	return "", nil
 }
@@ -159,7 +159,7 @@ func TestSecretSetAndRM_RefreshRunningProxy(t *testing.T) {
 		{"github": "new-value"},
 	}
 	for i, raw := range running.stdin {
-		if !reflect.DeepEqual(running.argv[i], writeSecretsExecArgs(proxyContainer)) {
+		if !reflect.DeepEqual(running.argv[i], writeSecretsExecArgs(proxyName())) {
 			t.Errorf("payload %d sent with argv %v", i, running.argv[i])
 		}
 		var p map[string]json.RawMessage
