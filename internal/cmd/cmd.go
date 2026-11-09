@@ -118,9 +118,7 @@ func (h Handler) Up(name string, c cfg.Effective, home, cwd string) error {
 		return err
 	}
 	if created && len(c.Copies) > 0 {
-		copies := mountresolver.ResolveCopies(c.Copies,
-			mountresolver.Env{Home: home, CWD: cwd, SharedDir: c.SharedDir}, h.Log)
-		h.doCopies(name, copies)
+		h.doCopies(name, resolveCopies(c, home, cwd, h.Log))
 	}
 	h.Log.OK("entering shell — run `pi` (or `claude`) inside")
 	return dx.Shell(h.Docker, name)
@@ -329,7 +327,8 @@ func buildSpec(name string, c cfg.Effective, home, cwd string, extraLabels map[s
 		env["ANTHROPIC_API_KEY"] = os.Getenv("ANTHROPIC_API_KEY")
 		return spec
 	}
-	// Proxy mode: no real secrets enter the container.
+	// Proxy mode: no real secrets enter the container, by env or by mount.
+	spec.Mounts = mountresolver.RefuseCredentials(spec.Mounts, sandboxCredentialPaths(home), warn)
 	spec.Network = networkName(name)
 	proxyURL := "http://" + proxyName() + ":8080"
 	env["HTTPS_PROXY"] = proxyURL
@@ -347,4 +346,22 @@ func buildSpec(name string, c cfg.Effective, home, cwd string, extraLabels map[s
 		env[ev] = proxy.Sentinel(sec)
 	}
 	return spec
+}
+
+// resolveCopies resolves the configured one-way copies into the sandbox. In
+// proxy mode, like mounts, copies of host credentials are refused.
+func resolveCopies(c cfg.Effective, home, cwd string, warn mountresolver.Warner) []mountresolver.CopySpec {
+	copies := mountresolver.ResolveCopies(c.Copies,
+		mountresolver.Env{Home: home, CWD: cwd, SharedDir: c.SharedDir}, warn)
+	if c.Proxy == nil {
+		return copies
+	}
+	return mountresolver.RefuseCredentialCopies(copies, sandboxCredentialPaths(home), warn)
+}
+
+// sandboxCredentialPaths are the host paths a proxy-mode sandbox may not see:
+// the usual credential stores and aisb's own config directory (CA key,
+// encrypted store).
+func sandboxCredentialPaths(home string) []string {
+	return mountresolver.CredentialPaths(home, configDir())
 }

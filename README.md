@@ -336,6 +336,15 @@ network automatically. With no `proxy` block, `aisb` behaves exactly as before.
 | `aisb proxy stop`   | Stop the shared proxy container.               |
 | `aisb proxy log`    | Stream the proxy's allow/deny decisions.       |
 
+In proxy mode `aisb` also refuses to mount or copy host credentials into the
+sandbox, warning about each: `~/.ssh`, cloud and cluster logins (`~/.aws`,
+`~/.config/gcloud`, `~/.kube`, ...), registry and package tokens (`~/.docker`,
+`~/.npmrc`, `~/.netrc`, `~/.config/gh`, ...), agent login files (Codex
+`auth.json`, Claude Code credentials, pi `auth.json`), container runtime
+directories and any socket (a Docker socket is control of the host), aisb's own
+config directory (CA key, secret store), and anything that contains one of
+these, such as your whole home directory.
+
 Git over SSH (`git@github.com:...`) is out of scope for now: use HTTPS
 remotes so the proxy can inject your token. Projects that publish `ports`
 also need an inbound forwarder that is not yet built, so `ports` and proxy
