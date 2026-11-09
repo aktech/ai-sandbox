@@ -308,3 +308,34 @@ func TestServer_UpdateSecretsTakesEffectLive(t *testing.T) {
 		t.Fatalf("after update: upstream saw %q, want NEWKEY", got)
 	}
 }
+
+// A plain-HTTP request to an inject host must not carry the real secret: it
+// would cross the network unencrypted. The placeholder goes out unchanged.
+func TestServer_PlainHTTPGetsNoSecret(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, r.Header.Get("x-api-key"))
+	}))
+	defer upstream.Close()
+	upHost := upstream.Listener.Addr().String()
+
+	caCert, caKey, _ := ca.Generate("test")
+	srv, _ := New(map[string]string{"anthropic": "REALKEY"}, caCert, caKey)
+	_ = srv.UpdateRules(RuleSet{
+		Projects: []Subnet{{CIDR: "127.0.0.0/8", Allow: []string{upHost}}},
+		Inject:   map[string]InjectRule{hostOnly(upHost): {Header: "x-api-key", Secret: "anthropic"}},
+	})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	req, _ := http.NewRequest("GET", "http://"+upHost+"/", nil)
+	req.Header.Set("x-api-key", Sentinel("anthropic"))
+	resp, err := newClient(t, ts.URL, caCert).Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != Sentinel("anthropic") {
+		t.Fatalf("upstream saw x-api-key=%q over plain HTTP, want the placeholder", string(body))
+	}
+}

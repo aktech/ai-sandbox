@@ -33,7 +33,11 @@ func NewInjector(rules map[string]InjectRule, secrets map[string]string) *Inject
 
 // Apply swaps the placeholder in req's auth header for the real secret, in
 // place, when a rule matches its host and the header carries the placeholder.
+// Only HTTPS requests are touched: a real secret never goes out unencrypted.
 func (i *Injector) Apply(req *http.Request) {
+	if req.URL.Scheme != "https" {
+		return
+	}
 	host := req.URL.Hostname()
 	rule, ok := i.rules[host]
 	if !ok {

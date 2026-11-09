@@ -129,8 +129,10 @@ func TestServer_WebSocketThroughTunnel(t *testing.T) {
 	}
 }
 
-// ws:// (plain HTTP, no CONNECT) to an inject host: same swap, same relay.
-func TestServer_PlainWebSocketInjectsOnUpgrade(t *testing.T) {
+// ws:// (plain HTTP, no CONNECT) to an inject host: the upgrade is relayed,
+// but the real token is never put on an unencrypted connection, so the
+// placeholder goes out unchanged.
+func TestServer_PlainWebSocketGetsNoSecret(t *testing.T) {
 	up := httptest.NewServer(http.HandlerFunc(wsEcho))
 	defer up.Close()
 	upHost := up.Listener.Addr().String()
@@ -144,8 +146,9 @@ func TestServer_PlainWebSocketInjectsOnUpgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	if got := upgrade(t, c, "http://"+upHost+"/ws", upHost, "Bearer "+Sentinel("openai")); got != "Bearer REALTOKEN" {
-		t.Fatalf("upstream saw Authorization %q, want Bearer REALTOKEN", got)
+	want := "Bearer " + Sentinel("openai")
+	if got := upgrade(t, c, "http://"+upHost+"/ws", upHost, want); got != want {
+		t.Fatalf("upstream saw Authorization %q, want the placeholder %q", got, want)
 	}
 }
 
