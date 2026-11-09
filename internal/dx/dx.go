@@ -136,6 +136,19 @@ func ImageExists(e Executor, image string) bool {
 	return e.RunSilent("image", "inspect", image) == nil
 }
 
+// DaemonError returns nil when the docker daemon answers, otherwise an error
+// carrying the client's message (e.g. "Cannot connect to the Docker daemon").
+func DaemonError(e Executor) error {
+	out, err := e.Output("version", "--format", "{{.Server.Version}}")
+	if err == nil {
+		return nil
+	}
+	if out == "" {
+		return err
+	}
+	return fmt.Errorf("%s", out)
+}
+
 // ListNames returns container names matching the given prefix.
 func ListNames(e Executor, namePrefix string) ([]string, error) {
 	out, err := e.Output("ps", "-a",

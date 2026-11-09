@@ -54,6 +54,9 @@ func (h Handler) ensure(name string, c cfg.Effective, home, cwd string, extraLab
 	h.Log.Log(fmt.Sprintf("project: %s  container: %s", filepath.Base(cwd), name))
 
 	if !dx.ImageExists(h.Docker, c.Image) {
+		if err := dx.DaemonError(h.Docker); err != nil {
+			return false, fmt.Errorf("docker daemon not reachable (is it running?): %w", err)
+		}
 		return false, fmt.Errorf("image %s not found — run `aisb build`", c.Image)
 	}
 
