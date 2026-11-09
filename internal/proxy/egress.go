@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -38,10 +39,6 @@ func localAddr(ip netip.Addr) bool {
 // resolves (in any of its records) to a local one, and dials the address it
 // checked.
 func guardedDial(ctx context.Context, network, addr string, wildcard bool) (net.Conn, error) {
-	if !wildcard {
-		d := net.Dialer{Timeout: dialTimeout}
-		return d.DialContext(ctx, network, addr)
-	}
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return nil, err
@@ -50,29 +47,124 @@ func guardedDial(ctx context.Context, network, addr string, wildcard bool) (net.
 	if err != nil {
 		return nil, err
 	}
-	for _, ip := range ips {
-		if localAddr(ip) {
-			return nil, fmt.Errorf("aisb-proxy: %s is a local address; \"*\" does not cover it, list the host explicitly", host)
+	if wildcard {
+		for _, ip := range ips {
+			if localAddr(ip) {
+				return nil, fmt.Errorf("aisb-proxy: %s is a local address; \"*\" does not cover it, list the host explicitly", host)
+			}
 		}
 	}
-	// IPv4 first: a sandbox VM often has no IPv6 route, and a dropped SYN would
-	// otherwise hold the request until the OS gives up. Each attempt is bounded.
-	sort.SliceStable(ips, func(i, j int) bool { return ips[i].Unmap().Is4() && !ips[j].Unmap().Is4() })
-	var last error
-	for _, ip := range ips {
-		attempt, cancel := context.WithTimeout(ctx, dialTimeout)
-		c, err := dialIP(attempt, network, net.JoinHostPort(ip.Unmap().String(), port))
-		cancel()
-		if err == nil {
-			return c, nil
-		}
-		last = err
-	}
-	return nil, last
+	return raceDial(ctx, network, port, ips)
 }
 
-// dialTimeout bounds each connection attempt to one upstream address.
-var dialTimeout = 10 * time.Second
+// Upstream dial timings. A NAT in front of the proxy (a Docker VM's user-mode
+// network) can silently drop the first SYN of a new flow, and the kernel only
+// retransmits it after a second or more. So each attempt is short, a second
+// attempt on a fresh connection starts raceDelay after the first (RFC 8305's
+// connection attempt delay), and the whole dial gives up after dialBudget.
+var (
+	attemptTimeout = 1500 * time.Millisecond
+	raceDelay      = 250 * time.Millisecond
+	dialBudget     = 10 * time.Second
+)
+
+// maxRacing is how many attempts may be in flight at once.
+const maxRacing = 2
+
+// raceDial connects to one of ips on port. IPv4 goes first because a sandbox
+// VM often has no IPv6 route. Addresses are tried in turn, round and round: a
+// new attempt starts every raceDelay, or as soon as one fails, with at most
+// maxRacing in flight; an address that refuses is dropped, one that times out
+// stays in the rotation. The first connection wins and any later one is closed.
+func raceDial(ctx context.Context, network, port string, ips []netip.Addr) (net.Conn, error) {
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("aisb-proxy: no addresses for port %s", port)
+	}
+	plan := append([]netip.Addr(nil), ips...)
+	sort.SliceStable(plan, func(i, j int) bool { return plan[i].Unmap().Is4() && !plan[j].Unmap().Is4() })
+
+	ctx, cancel := context.WithTimeout(ctx, dialBudget)
+	defer cancel()
+
+	type result struct {
+		ip   netip.Addr
+		conn net.Conn
+		err  error
+	}
+	results := make(chan result)
+	inFlight, next := 0, 0
+	launch := func() {
+		ip := plan[next%len(plan)]
+		next++
+		inFlight++
+		go func() {
+			attempt, stop := context.WithTimeout(ctx, attemptTimeout)
+			c, err := dialIP(attempt, network, net.JoinHostPort(ip.Unmap().String(), port))
+			stop()
+			select {
+			case results <- result{ip, c, err}:
+			case <-ctx.Done():
+				if c != nil {
+					c.Close()
+				}
+			}
+		}()
+	}
+
+	timer := time.NewTimer(raceDelay)
+	defer timer.Stop()
+	var last error
+	launch()
+	for {
+		select {
+		case r := <-results:
+			inFlight--
+			if r.err == nil {
+				return r.conn, nil
+			}
+			last = r.err
+			if !timedOut(r.err) {
+				plan = without(plan, r.ip)
+			}
+			if len(plan) == 0 {
+				if inFlight == 0 {
+					return nil, last
+				}
+				continue
+			}
+			if ctx.Err() == nil && inFlight < maxRacing {
+				launch()
+			}
+		case <-timer.C:
+			if len(plan) > 0 && inFlight < maxRacing {
+				launch()
+			}
+			timer.Reset(raceDelay)
+		case <-ctx.Done():
+			if last == nil {
+				last = ctx.Err()
+			}
+			return nil, fmt.Errorf("aisb-proxy: no connection within %v: %w", dialBudget, last)
+		}
+	}
+}
+
+// timedOut reports whether err is an attempt that got no answer, as opposed to
+// one the upstream refused.
+func timedOut(err error) bool {
+	var ne net.Error
+	return errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout())
+}
+
+func without(ips []netip.Addr, ip netip.Addr) []netip.Addr {
+	out := ips[:0:0]
+	for _, x := range ips {
+		if x != ip {
+			out = append(out, x)
+		}
+	}
+	return out
+}
 
 // lookupIP and dialIP are the resolver and dialer guardedDial uses; tests replace them.
 var (
