@@ -1,4 +1,8 @@
-FROM debian:bookworm-slim
+# Base image pinned by digest (multi-arch index). The tag is informational;
+# Docker pulls exactly the digest. Digest from the Docker Hub registry API for
+# library/debian:bookworm-20261104-slim (also bookworm-slim at the time).
+# Bump: scripts/pins.sh image debian:bookworm-YYYYMMDD-slim
+FROM debian:bookworm-20261104-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
 
 # Agent versions are pinned here and only here. To update: bump the value,
 # release aisb, run `aisb build`. To try another version without a release:
