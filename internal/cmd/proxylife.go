@@ -107,6 +107,7 @@ func rulesForProject(c cfg.Effective, cidr string) (proxy.RuleSet, error) {
 	}
 	return proxy.RuleSet{
 		Inject:   pc.Inject,
+		OAuth:    pc.OAuth,
 		Projects: []proxy.Subnet{{CIDR: cidr, Allow: pc.EffectiveAllow()}},
 	}, nil
 }
@@ -114,7 +115,7 @@ func rulesForProject(c cfg.Effective, cidr string) (proxy.RuleSet, error) {
 // parseProxyBlock converts the raw cfg proxy block into a parsed proxy.Config
 // (allow list + typed inject rules).
 func parseProxyBlock(p *cfg.ProxyBlock) (*proxy.Config, error) {
-	raw, err := json.Marshal(map[string]any{"allow": p.Allow, "inject": p.Inject})
+	raw, err := json.Marshal(map[string]any{"allow": p.Allow, "inject": p.Inject, "oauth": p.OAuth})
 	if err != nil {
 		return nil, err
 	}

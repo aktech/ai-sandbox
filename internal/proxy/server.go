@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/elazarl/goproxy"
@@ -23,6 +24,9 @@ type Server struct {
 	proxy   *goproxy.ProxyHttpServer
 	secrets atomic.Pointer[map[string]string]
 	rules   atomic.Pointer[compiledRules]
+
+	secretsMu sync.Mutex // serialises writers of secrets
+	onRefresh atomic.Pointer[func(map[string]string)]
 
 	log *slog.Logger
 
@@ -81,7 +85,7 @@ func New(secrets map[string]string, caCertPEM, caKeyPEM []byte) (*Server, error)
 			s.log.Info("connect", "decision", "deny", "host", host, "src", src)
 			return s.reject, host
 		}
-		if _, inject := c.injectRules()[hostOnly(host)]; inject {
+		if c.mitm(host) {
 			s.log.Info("connect", "decision", "allow", "mode", "mitm", "host", host, "src", src)
 			return s.mitm, host
 		}
@@ -111,8 +115,35 @@ func New(secrets map[string]string, caCertPEM, caKeyPEM []byte) (*Server, error)
 		}
 		req = req.WithContext(withWildcardOnly(req.Context(),
 			!c.allowlistFor(req.RemoteAddr).Explicit(req.URL.Host)))
-		NewInjector(c.injectRules(), *s.secrets.Load()).Apply(req)
+		secrets := *s.secrets.Load()
+		st, err := swapRefresh(req, c.oauth, secrets)
+		if err != nil {
+			return req, goproxy.NewResponse(req, goproxy.ContentTypeText,
+				http.StatusBadGateway, "aisb-proxy: could not read token request\n")
+		}
+		if st != nil {
+			ctx.UserData = st
+			s.log.Info("oauth refresh", "host", req.URL.Host, "src", req.RemoteAddr)
+		}
+		NewInjector(c.injectRules(), secrets).Apply(req)
 		return req, nil
+	})
+
+	// A token-endpoint reply to a refresh the proxy completed: keep the new
+	// real tokens, give the agent placeholders.
+	s.proxy.OnResponse().DoFunc(func(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
+		st, ok := ctx.UserData.(*refreshState)
+		if !ok || resp == nil {
+			return resp
+		}
+		if tokens := rewriteTokenReply(resp, st); len(tokens) > 0 {
+			s.mergeSecrets(tokens)
+			s.log.Info("oauth tokens refreshed", "host", ctx.Req.URL.Host, "count", len(tokens))
+			if f := s.onRefresh.Load(); f != nil {
+				(*f)(tokens)
+			}
+		}
+		return resp
 	})
 
 	return s, nil
@@ -139,8 +170,30 @@ func (s *Server) UpdateSecrets(secrets map[string]string) {
 	for k, v := range secrets {
 		cp[k] = v
 	}
+	s.secretsMu.Lock()
+	s.secrets.Store(&cp)
+	s.secretsMu.Unlock()
+}
+
+// mergeSecrets sets the given secrets on top of the current ones.
+func (s *Server) mergeSecrets(set map[string]string) {
+	s.secretsMu.Lock()
+	defer s.secretsMu.Unlock()
+	cur := *s.secrets.Load()
+	cp := make(map[string]string, len(cur)+len(set))
+	for k, v := range cur {
+		cp[k] = v
+	}
+	for k, v := range set {
+		cp[k] = v
+	}
 	s.secrets.Store(&cp)
 }
+
+// OnRefresh registers f to receive the real tokens (secret name -> value)
+// each time the proxy completes an OAuth refresh, so they can be persisted.
+// f must not log or print the values.
+func (s *Server) OnRefresh(f func(tokens map[string]string)) { s.onRefresh.Store(&f) }
 
 // Handler exposes the proxy as an http.Handler (used by tests and main).
 func (s *Server) Handler() http.Handler { return s.proxy }

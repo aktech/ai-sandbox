@@ -6,6 +6,7 @@ import "encoding/json"
 type Config struct {
 	Allow  []string              `json:"allow"`
 	Inject map[string]InjectRule `json:"inject"`
+	OAuth  map[string]OAuthRule  `json:"oauth"`
 }
 
 // inlineRule mirrors InjectRule for JSON (lowercase tags).
@@ -20,18 +21,20 @@ func ParseConfig(data []byte) (*Config, error) {
 	var aux struct {
 		Allow  []string              `json:"allow"`
 		Inject map[string]inlineRule `json:"inject"`
+		OAuth  map[string]OAuthRule  `json:"oauth"`
 	}
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return nil, err
 	}
-	c := &Config{Allow: aux.Allow, Inject: map[string]InjectRule{}}
+	c := &Config{Allow: aux.Allow, Inject: map[string]InjectRule{}, OAuth: aux.OAuth}
 	for host, r := range aux.Inject {
 		c.Inject[host] = InjectRule{Header: r.Header, Secret: r.Secret, Format: r.Format, Basic: r.Basic}
 	}
 	return c, nil
 }
 
-// EffectiveAllow returns Allow plus every inject host (inject implies allow).
+// EffectiveAllow returns Allow plus every inject and OAuth host (handling a
+// host implies allowing it).
 func (c *Config) EffectiveAllow() []string {
 	seen := map[string]bool{}
 	var out []string
@@ -45,6 +48,9 @@ func (c *Config) EffectiveAllow() []string {
 		add(h)
 	}
 	for h := range c.Inject {
+		add(h)
+	}
+	for h := range c.OAuth {
 		add(h)
 	}
 	return out

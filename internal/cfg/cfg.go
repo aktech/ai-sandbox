@@ -47,6 +47,9 @@ type Project struct {
 type ProxyBlock struct {
 	Allow  []string                   `json:"allow"`
 	Inject map[string]json.RawMessage `json:"inject,omitempty"`
+	// OAuth names OAuth token endpoints whose refreshes the proxy completes
+	// itself, so the agent never holds a real access or refresh token.
+	OAuth map[string]json.RawMessage `json:"oauth,omitempty"`
 	// Env maps a secret name to the environment variable the sandbox sets to
 	// that secret's sentinel, e.g. {"github": "GH_TOKEN"}. This is how a tool
 	// inside the sandbox is told it is "authenticated" without ever seeing the
@@ -119,10 +122,14 @@ func Resolve(path, project string, base Effective) Effective {
 			np := &ProxyBlock{
 				Allow:  append([]string(nil), p.Proxy.Allow...),
 				Inject: map[string]json.RawMessage{},
+				OAuth:  map[string]json.RawMessage{},
 				Env:    map[string]string{},
 			}
 			for k, v := range p.Proxy.Inject {
 				np.Inject[k] = v
+			}
+			for k, v := range p.Proxy.OAuth {
+				np.OAuth[k] = v
 			}
 			for k, v := range p.Proxy.Env {
 				np.Env[k] = v

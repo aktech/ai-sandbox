@@ -22,6 +22,7 @@ type RuleSet struct {
 	Universal []string              `json:"universal"`
 	Projects  []Subnet              `json:"projects"`
 	Inject    map[string]InjectRule `json:"inject"`
+	OAuth     map[string]OAuthRule  `json:"oauth,omitempty"`
 }
 
 // CombineRuleSets unions several per-project rule sets (one per sandbox file)
@@ -30,7 +31,7 @@ type RuleSet struct {
 // set that supplies them (they are identical across projects, derived from the
 // shared default config).
 func CombineRuleSets(sets []RuleSet) RuleSet {
-	out := RuleSet{Inject: map[string]InjectRule{}}
+	out := RuleSet{Inject: map[string]InjectRule{}, OAuth: map[string]OAuthRule{}}
 	byCIDR := map[string]Subnet{}
 	var order []string
 	for _, rs := range sets {
@@ -39,6 +40,9 @@ func CombineRuleSets(sets []RuleSet) RuleSet {
 		}
 		for h, r := range rs.Inject {
 			out.Inject[h] = r
+		}
+		for h, r := range rs.OAuth {
+			out.OAuth[h] = r
 		}
 		for _, s := range rs.Projects {
 			if _, seen := byCIDR[s.CIDR]; !seen {
@@ -61,6 +65,7 @@ type compiledSubnet struct {
 type compiledRules struct {
 	universal []string
 	inject    map[string]InjectRule
+	oauth     map[string]OAuthRule
 	subnets   []compiledSubnet
 }
 
@@ -68,6 +73,7 @@ func compile(rs RuleSet) (*compiledRules, error) {
 	c := &compiledRules{
 		universal: rs.Universal,
 		inject:    rs.Inject,
+		oauth:     rs.OAuth,
 	}
 	for _, s := range rs.Projects {
 		_, ipnet, err := net.ParseCIDR(s.CIDR)
@@ -99,6 +105,15 @@ func (c *compiledRules) allowlistFor(srcAddr string) *Allowlist {
 
 // injectRules returns the global host->rule map.
 func (c *compiledRules) injectRules() map[string]InjectRule { return c.inject }
+
+// mitm reports whether the proxy must decrypt traffic to host (port
+// ignored): it injects a secret there or handles its OAuth token endpoint.
+func (c *compiledRules) mitm(host string) bool {
+	h := hostOnly(host)
+	_, inject := c.inject[h]
+	_, oauth := c.oauth[h]
+	return inject || oauth
+}
 
 // parseHostIP extracts the IP from "ip" or "ip:port".
 func parseHostIP(addr string) net.IP {

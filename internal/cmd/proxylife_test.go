@@ -2,12 +2,14 @@ package cmd
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/aktech/ai-sandbox/internal/cfg"
+	"github.com/aktech/ai-sandbox/internal/proxy"
 )
 
 func TestNetworkName(t *testing.T) {
@@ -222,5 +224,27 @@ func TestProxyName_DefaultOverrideAndPerConfig(t *testing.T) {
 	t.Setenv("AISB_PROXY_NAME", "aisb-proxy-alt")
 	if spec, stopped := nameUsed(); spec != "aisb-proxy-alt" || stopped != "aisb-proxy-alt" {
 		t.Fatalf("AISB_PROXY_NAME: sandbox uses %q, stop removes %q, want aisb-proxy-alt", spec, stopped)
+	}
+}
+
+// An "oauth" block in config.json reaches the proxy's rules: the token
+// endpoint host is handled (and so reachable) even in a "*" project.
+func TestRulesForProject_OAuthFromConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"default": {"proxy": {"allow": ["*"],
+		"oauth": {"auth.openai.com": {"path": "/oauth/token", "access": "codex", "refresh": "codex_refresh"}}}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := cfg.Resolve(path, "/p", cfg.Effective{})
+	rs, err := rulesForProject(c, "10.0.0.0/8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := proxy.OAuthRule{Path: "/oauth/token", Access: "codex", Refresh: "codex_refresh"}
+	if rs.OAuth["auth.openai.com"] != want {
+		t.Fatalf("oauth rules = %#v, want %#v for auth.openai.com", rs.OAuth, want)
+	}
+	if !proxy.NewAllowlist(rs.Projects[0].Allow).Explicit("auth.openai.com:443") {
+		t.Fatalf("allow %#v does not name the token host", rs.Projects[0].Allow)
 	}
 }
