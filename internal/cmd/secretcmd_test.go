@@ -2,12 +2,14 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/aktech/ai-sandbox/internal/proxy"
 	"github.com/aktech/ai-sandbox/internal/secret"
 )
 
@@ -87,21 +89,35 @@ func TestCheckProxySetUp(t *testing.T) {
 
 // proxyStub is a dx.Executor that reports a running proxy container (when
 // running is set) and records what is piped to it.
+// pending is what the proxy's pending-token file holds; silent records
+// RunSilent argv (acks, removal).
 type proxyStub struct {
 	running bool
+	pending string
+	oldPx   bool // a proxy too old to know --read-pending
 	stdin   [][]byte
 	argv    [][]string
+	silent  [][]string
 }
 
 func (s *proxyStub) Output(args ...string) (string, error) {
 	if s.running && len(args) > 0 && args[0] == "ps" {
 		return proxyName() + "\n", nil
 	}
+	if s.running && reflect.DeepEqual(args, readPendingExecArgs(proxyName())) {
+		if s.oldPx {
+			return "", errors.New("exit status 1")
+		}
+		return s.pending, nil
+	}
 	return "", nil
 }
-func (s *proxyStub) Run(...string) error       { return nil }
-func (s *proxyStub) RunSilent(...string) error { return nil }
-func (s *proxyStub) Replace(...string) error   { return nil }
+func (s *proxyStub) Run(...string) error { return nil }
+func (s *proxyStub) RunSilent(args ...string) error {
+	s.silent = append(s.silent, args)
+	return nil
+}
+func (s *proxyStub) Replace(...string) error { return nil }
 func (s *proxyStub) RunWithStdin(in []byte, args ...string) error {
 	s.stdin = append(s.stdin, in)
 	s.argv = append(s.argv, args)
@@ -183,3 +199,112 @@ func (l *captureLog) Log(s string)  { l.lines = append(l.lines, s) }
 func (l *captureLog) Step(s string) { l.lines = append(l.lines, s) }
 func (l *captureLog) OK(s string)   { l.lines = append(l.lines, s) }
 func (l *captureLog) Warn(s string) { l.lines = append(l.lines, s) }
+
+// storeWith creates a secret store holding secrets and points aisb at it.
+func storeWith(t *testing.T, secrets map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("AISB_CONFIG_FILE", filepath.Join(dir, "config.json"))
+	t.Setenv("AISB_MASTER_PASSWORD", "pw-for-test")
+	path := filepath.Join(dir, "secrets.enc")
+	if err := secret.Save(path, []byte("pw-for-test"), secrets); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func loadStore(t *testing.T, path string) map[string]string {
+	t.Helper()
+	got, err := secret.Load(path, []byte("pw-for-test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+func (s *proxyStub) acked() bool {
+	want := ackPendingExecArgs(proxyName(), proxy.PendingSum([]byte(s.pending)))
+	for _, a := range s.silent {
+		if reflect.DeepEqual(a, want) {
+			return true
+		}
+	}
+	return false
+}
+
+// Tokens the proxy obtained by refreshing are saved in the encrypted store by
+// `aisb secret sync`, and the proxy is told to drop exactly what was saved.
+// No token value is printed.
+func TestSecretSync_SavesRefreshedTokens(t *testing.T) {
+	path := storeWith(t, map[string]string{"codex": "old-a", "codex_refresh": "old-r", "github": "gh"})
+	stub := &proxyStub{running: true, pending: `{"codex":"new-a","codex_refresh":"new-r"}`}
+	log := &captureLog{}
+	if err := (Handler{Log: log, Docker: stub}).SecretSync(); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"codex": "new-a", "codex_refresh": "new-r", "github": "gh"}
+	if got := loadStore(t, path); !reflect.DeepEqual(got, want) {
+		t.Fatalf("store = %v, want %v", got, want)
+	}
+	if !stub.acked() {
+		t.Fatalf("proxy was not told to drop the saved tokens; ran %v", stub.silent)
+	}
+	for _, l := range log.lines {
+		if strings.Contains(l, "new-a") || strings.Contains(l, "new-r") {
+			t.Fatalf("a token value was printed: %q", l)
+		}
+	}
+}
+
+// `aisb secret set` pulls refreshed tokens in first, so the full store it
+// saves and hands back to the proxy does not roll them back.
+func TestSecretSet_KeepsRefreshedTokens(t *testing.T) {
+	path := storeWith(t, map[string]string{"codex_refresh": "old-r"})
+	stub := &proxyStub{running: true, pending: `{"codex_refresh":"new-r"}`}
+	withStdin(t, "gh-value\n")
+	if err := (Handler{Log: &captureLog{}, Docker: stub}).SecretSet("github"); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"codex_refresh": "new-r", "github": "gh-value"}
+	if got := loadStore(t, path); !reflect.DeepEqual(got, want) {
+		t.Fatalf("store = %v, want %v", got, want)
+	}
+	var pushed struct{ Secrets map[string]string }
+	_ = json.Unmarshal(stub.stdin[0], &pushed)
+	if !reflect.DeepEqual(pushed.Secrets, want) {
+		t.Fatalf("proxy was handed %v, want %v", pushed.Secrets, want)
+	}
+	if !stub.acked() {
+		t.Fatal("proxy was not told to drop the saved tokens")
+	}
+}
+
+// Stopping the proxy would lose tokens it refreshed (they live in its RAM),
+// so `aisb proxy stop` saves them first.
+func TestProxyStop_SavesRefreshedTokensFirst(t *testing.T) {
+	path := storeWith(t, map[string]string{"codex_refresh": "old-r"})
+	stub := &proxyStub{running: true, pending: `{"codex_refresh":"new-r"}`}
+	if err := (Handler{Log: &captureLog{}, Docker: stub}).ProxyStop(); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadStore(t, path)["codex_refresh"]; got != "new-r" {
+		t.Fatalf("store codex_refresh = %q, want the refreshed token", got)
+	}
+}
+
+// A running proxy from an older aisb cannot report refreshed tokens (it holds
+// none); that must not block changing secrets or stopping it.
+func TestOldProxyDoesNotBlockSetOrStop(t *testing.T) {
+	path := storeWith(t, map[string]string{})
+	stub := &proxyStub{running: true, oldPx: true}
+	withStdin(t, "v\n")
+	if err := (Handler{Log: &captureLog{}, Docker: stub}).SecretSet("github"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if loadStore(t, path)["github"] != "v" {
+		t.Fatal("secret not stored")
+	}
+	if err := (Handler{Log: &captureLog{}, Docker: stub}).ProxyStop(); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+}

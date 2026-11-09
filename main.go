@@ -211,6 +211,7 @@ Usage:
   aisb secret set <name>  store a secret (no echo)
   aisb secret rm  <name>  remove a secret
   aisb secret ls          list stored secret names
+  aisb secret sync        save tokens the proxy refreshed into the store
 
   --wait-copies    with aisb / aisb up: finish copies before opening the shell
 
@@ -380,6 +381,7 @@ Usage:
   aisb secret set <name>  store/replace a secret named <name>
   aisb secret rm  <name>  remove a secret
   aisb secret ls          list stored secret names (never values)
+  aisb secret sync        save tokens the proxy obtained by OAuth refreshes
 
 The value for 'set' is read from stdin (pipe it, or paste at the masked prompt),
 never from an argument, so it can't leak via shell history or the process list.
@@ -398,7 +400,10 @@ Notes:
   - 'set' and 'rm' also update a running proxy, so a new or refreshed value is
     used from the next request on, with no restart. To refresh a token that
     another tool rewrites on the host, pipe it in again, e.g.
-    jq -r .access_token token.json | aisb secret set openai`
+    jq -r .access_token token.json | aisb secret set openai
+  - Tokens the proxy obtains by completing an OAuth refresh (proxy.oauth) are
+    used at once and kept in its memory. 'set', 'rm', 'sync' and 'aisb proxy
+    stop' save them into the encrypted store, so they survive a proxy restart.`
 
 const proxyHelp = `aisb proxy - manage the credential-injecting egress proxy
 
@@ -440,8 +445,10 @@ func dispatchSecret(h cmd.Handler, args []string) error {
 		return h.SecretRM(args[1])
 	case "ls":
 		return h.SecretLS()
+	case "sync":
+		return h.SecretSync()
 	default:
-		return fmt.Errorf("unknown secret action %q (use: set | rm | ls; `aisb secret` for help)", args[0])
+		return fmt.Errorf("unknown secret action %q (use: set | rm | ls | sync; `aisb secret` for help)", args[0])
 	}
 }
 

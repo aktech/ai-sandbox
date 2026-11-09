@@ -14,6 +14,7 @@ import (
 	"github.com/aktech/ai-sandbox/internal/ca"
 	"github.com/aktech/ai-sandbox/internal/cfg"
 	"github.com/aktech/ai-sandbox/internal/dx"
+	"github.com/aktech/ai-sandbox/internal/proxy"
 	"github.com/aktech/ai-sandbox/internal/secret"
 	"golang.org/x/term"
 )
@@ -212,20 +213,95 @@ func newMasterPassword() ([]byte, error) {
 // terminal. It is never passed as an argument, so it cannot leak via shell
 // history or the process table.
 func (h Handler) SecretSet(name string) error {
-	pw, secrets, err := unlockSecrets(unlockPrompt())
-	if err != nil {
+	if _, err := h.updateStore(func(secrets map[string]string) error {
+		val, err := readSecretValue(name)
+		secrets[name] = val
 		return err
-	}
-	val, err := readSecretValue(name)
-	if err != nil {
-		return err
-	}
-	secrets[name] = val
-	if err := h.saveSecrets(pw, secrets); err != nil {
+	}); err != nil {
 		return err
 	}
 	h.Log.OK("stored secret " + name)
 	return nil
+}
+
+// updateStore unlocks the store, first takes in any tokens the running proxy
+// obtained by completing OAuth refreshes, applies change, saves, hands the
+// result to the proxy and then lets the proxy drop the tokens it saved. It
+// returns how many refreshed tokens it took in.
+func (h Handler) updateStore(change func(map[string]string) error) (int, error) {
+	pw, secrets, err := unlockSecrets(unlockPrompt())
+	if err != nil {
+		return 0, err
+	}
+	p, err := h.readPending()
+	if err != nil {
+		return 0, err
+	}
+	for k, v := range p.tokens {
+		secrets[k] = v
+	}
+	if err := change(secrets); err != nil {
+		return 0, err
+	}
+	if err := h.saveSecrets(pw, secrets); err != nil {
+		return 0, err
+	}
+	if len(p.tokens) > 0 {
+		if err := h.Docker.RunSilent(ackPendingExecArgs(proxyName(), proxy.PendingSum([]byte(p.raw)))...); err != nil {
+			h.Log.Warn("saved refreshed tokens, but the proxy still lists them (" + err.Error() + "); the next sync saves them again")
+		}
+		h.Log.OK("saved refreshed tokens: " + strings.Join(sortedKeys(p.tokens), ", "))
+	}
+	return len(p.tokens), nil
+}
+
+// pendingTokens are tokens a running proxy obtained by completing OAuth
+// refreshes and has not yet seen saved; raw is exactly what it reported.
+type pendingTokens struct {
+	raw    string
+	tokens map[string]string
+}
+
+// readPending asks a running proxy for its pending tokens (none when no
+// proxy runs, or it cannot say). Only a reply it cannot parse is an error,
+// since saving without those tokens would roll them back.
+func (h Handler) readPending() (pendingTokens, error) {
+	if !dx.ContainerRunning(h.Docker, proxyName()) {
+		return pendingTokens{}, nil
+	}
+	out, err := h.Docker.Output(readPendingExecArgs(proxyName())...)
+	if err != nil {
+		// A proxy built by an older aisb has no pending tokens to report.
+		h.Log.Warn("could not ask the proxy for refreshed tokens (" + err.Error() + "); if it was started by an older aisb, restart it with `aisb proxy stop` and `aisb`")
+		return pendingTokens{}, nil
+	}
+	p := pendingTokens{raw: out}
+	if out == "" {
+		return p, nil
+	}
+	if err := json.Unmarshal([]byte(out), &p.tokens); err != nil {
+		return pendingTokens{}, fmt.Errorf("the proxy reported refreshed tokens aisb cannot read (%v); nothing was saved", err)
+	}
+	return p, nil
+}
+
+// SecretSync saves tokens the running proxy obtained by completing OAuth
+// refreshes into the encrypted store.
+func (h Handler) SecretSync() error {
+	n, err := h.updateStore(func(map[string]string) error { return nil })
+	if err == nil && n == 0 {
+		h.Log.OK("nothing to sync: the proxy holds no refreshed tokens")
+	}
+	return err
+}
+
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // readSecretValue reads a secret value: piped stdin (trailing newline trimmed)
@@ -244,12 +320,10 @@ func readSecretValue(name string) (string, error) {
 
 // SecretRM deletes a secret by name.
 func (h Handler) SecretRM(name string) error {
-	pw, secrets, err := unlockSecrets(unlockPrompt())
-	if err != nil {
-		return err
-	}
-	delete(secrets, name)
-	if err := h.saveSecrets(pw, secrets); err != nil {
+	if _, err := h.updateStore(func(secrets map[string]string) error {
+		delete(secrets, name)
+		return nil
+	}); err != nil {
 		return err
 	}
 	h.Log.OK("removed secret " + name)
@@ -298,10 +372,21 @@ func (h Handler) SecretLS() error {
 }
 
 // ProxyStop removes the shared proxy container.
+//
+// Tokens the proxy obtained by refreshing live only in its memory, so they
+// are saved first; if that fails the proxy is left running.
 func (h Handler) ProxyStop() error {
 	if !dx.ContainerExists(h.Docker, proxyName()) {
 		h.Log.Warn("proxy not running")
 		return nil
+	}
+	p, err := h.readPending()
+	if err == nil && len(p.tokens) > 0 {
+		h.Log.Step("the proxy holds refreshed tokens; saving them before it stops")
+		_, err = h.updateStore(func(map[string]string) error { return nil })
+	}
+	if err != nil {
+		return fmt.Errorf("proxy left running: %w (fix it and run `aisb proxy stop` again)", err)
 	}
 	if err := dx.Remove(h.Docker, proxyName()); err != nil {
 		return err

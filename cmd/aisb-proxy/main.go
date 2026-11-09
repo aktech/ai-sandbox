@@ -9,7 +9,10 @@
 //     with --write-secrets to a separate file; the serving process watches it
 //     and swaps them in without a restart (the CA is fixed for its lifetime).
 //     The two files never share a path, so a refresh cannot be mistaken for
-//     the start-up payload.
+//     the start-up payload. Tokens the proxy itself obtains by completing an
+//     OAuth refresh go the other way: they are added to a pending file that
+//     the next store-unlocking aisb command reads (--read-pending), saves in
+//     the encrypted store and acknowledges (--ack-pending <sum>).
 //  3. On every `aisb`, aisb delivers the current rule set (per-project + universal
 //     allowlists, inject rules) via --write-rules. The rule set carries no
 //     secret values, so it needs no store unlock. The serving process watches
@@ -40,6 +43,7 @@ const (
 	payloadPath = "/run/aisb/payload.json" // secrets + CA, delivered once
 	secretsPath = "/run/aisb/secrets.json" // refreshed secrets, delivered on change
 	rulesDir    = "/run/aisb/rules.d"      // one rule file per project, delivered per aisb
+	pendingPath = "/run/aisb/pending.json" // tokens from OAuth refreshes, until the host saves them
 )
 
 func main() {
@@ -62,6 +66,19 @@ func main() {
 			}
 			_ = os.MkdirAll(rulesDir, 0o700)
 			writeFile(filepath.Join(rulesDir, sanitizeKey(os.Args[2])+".json"), os.Stdin)
+			return
+		case "--read-pending":
+			if err := readPending(pendingPath, os.Stdout); err != nil {
+				die("read pending tokens", "err", err)
+			}
+			return
+		case "--ack-pending":
+			if len(os.Args) < 3 {
+				die("missing sum", "arg", "--ack-pending")
+			}
+			if err := ackPending(pendingPath, os.Args[2]); err != nil {
+				die("ack pending tokens", "err", err)
+			}
 			return
 		case "--rm-rules":
 			if len(os.Args) < 3 {
@@ -91,9 +108,16 @@ func sanitizeKey(s string) string {
 // the same directory and renames it into place, so a watcher polling path
 // never reads a half-written file.
 func writeFile(path string, r io.Reader) {
+	if err := writeFileAtomic(path, r); err != nil {
+		die("write file", "path", path, "err", err)
+	}
+}
+
+// writeFileAtomic is writeFile returning its error instead of exiting.
+func writeFileAtomic(path string, r io.Reader) error {
 	f, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
 	if err != nil {
-		die("write file", "path", path, "err", err)
+		return err
 	}
 	tmp := f.Name()
 	_, err = io.Copy(f, r)
@@ -105,8 +129,8 @@ func writeFile(path string, r io.Reader) {
 	}
 	if err != nil {
 		_ = os.Remove(tmp)
-		die("write file", "path", path, "err", err)
 	}
+	return err
 }
 
 func serve() {
@@ -118,6 +142,11 @@ func serve() {
 	if err != nil {
 		die("building proxy", "err", err)
 	}
+	srv.OnRefresh(func(tokens map[string]string) {
+		if err := addPending(pendingPath, tokens); err != nil {
+			slog.Error("could not record refreshed tokens; run `aisb secret sync` after the next refresh", "err", err)
+		}
+	})
 	go watchRules(srv)
 	go watchSecrets(secretsPath, 500*time.Millisecond, nil, func(secrets map[string]string) {
 		srv.UpdateSecrets(secrets)

@@ -271,12 +271,53 @@ project's rules are isolated from the others.
   network: loopback, private ranges (10/8, 172.16/12, 192.168/16, 100.64/10,
   fc00::/7), link-local (including cloud metadata at 169.254.169.254) and other
   sandboxes stay unreachable, whether named by IP or by a name that resolves
-  there. List such a host explicitly (e.g. `"nas.lan:8080"`) to reach it. Even an unrestricted project still has its secrets injected and kept
-  out of the container; only the egress limits are lifted.
+  there. List such a host explicitly (e.g. `"nas.lan:8080"`) to reach it.
+  Even an unrestricted project still has its secrets injected and kept out of
+  the container; only the egress limits are lifted.
 
 Secrets update live too: `aisb secret set` and `aisb secret rm` hand the new
 values to a running proxy, so a refreshed token is used from the next request
 without restarting anything.
+
+### OAuth logins (Codex, Claude Code)
+
+Agents signed in with OAuth refresh their access token themselves, and the
+reply carries a new access token and often a new refresh token. The `oauth`
+block lets the proxy complete those refreshes so neither real token ever enters
+the sandbox:
+
+```json
+"proxy": {
+  "inject": {
+    "chatgpt.com":       {"header": "Authorization", "secret": "codex",  "format": "Bearer %s"},
+    "api.anthropic.com": {"header": "Authorization", "secret": "claude", "format": "Bearer %s"}
+  },
+  "oauth": {
+    "auth.openai.com":     {"path": "/oauth/token",    "access": "codex",  "refresh": "codex_refresh"},
+    "platform.claude.com": {"path": "/v1/oauth/token", "access": "claude", "refresh": "claude_refresh"}
+  }
+}
+```
+
+Store the real tokens with `aisb secret set codex` / `codex_refresh` (and the
+same for `claude`), and give the agent a credentials file holding the
+placeholders `__aisb_codex__` and `__aisb_codex_refresh__` in their place.
+When the agent posts a refresh carrying the placeholder refresh token (JSON or
+form body), the proxy sends the real one, keeps the new real tokens for the
+following requests, and replies with placeholders: a JWT keeps its header and
+claims (so the agent can still read its expiry) with the signature replaced,
+and a token like `sk-ant-oat01-...` keeps its `sk-ant-oat01-` prefix. Real
+token text anywhere in the reply, including error replies, is masked, and a
+reply the proxy cannot read is refused.
+
+The endpoints above are the ones the Codex CLI (`auth.openai.com/oauth/token`,
+JSON body) and Claude Code (`platform.claude.com/v1/oauth/token`, JSON body)
+use at the time of writing.
+
+New tokens live in the proxy's memory and in an owner-only file on its RAM
+disk until a host command that unlocks your store saves them: `aisb secret
+set`, `aisb secret rm`, `aisb secret sync` or `aisb proxy stop` (which saves
+them before stopping, so a rotated refresh token is not lost).
 
 Rules update live: entering a project pushes its allowlist to the running proxy
 (no master password needed, since rule updates carry no secrets). Removing a
@@ -291,6 +332,7 @@ network automatically. With no `proxy` block, `aisb` behaves exactly as before.
 | `aisb secret set X` | Store a secret (value read from stdin/no-echo).|
 | `aisb secret ls`    | List stored secret names (never values).       |
 | `aisb secret rm X`  | Remove a secret.                               |
+| `aisb secret sync`  | Save tokens the proxy refreshed into the store.|
 | `aisb proxy stop`   | Stop the shared proxy container.               |
 | `aisb proxy log`    | Stream the proxy's allow/deny decisions.       |
 

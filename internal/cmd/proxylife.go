@@ -231,3 +231,15 @@ func teardownSandboxNet(e dx.Executor, container string) {
 		_ = e.RunSilent("network", "rm", net)
 	}
 }
+
+// readPendingExecArgs builds argv to read the tokens a running proxy obtained
+// by completing OAuth refreshes (printed as a JSON object; empty when none).
+func readPendingExecArgs(name string) []string {
+	return []string{"exec", name, "/aisb-proxy", "--read-pending"}
+}
+
+// ackPendingExecArgs builds argv telling the proxy the host saved the pending
+// tokens whose content has this sum, so it may drop them.
+func ackPendingExecArgs(name, sum string) []string {
+	return []string{"exec", name, "/aisb-proxy", "--ack-pending", sum}
+}
