@@ -4,10 +4,12 @@
 # Bump: scripts/pins.sh image debian:bookworm-YYYYMMDD-slim
 FROM debian:bookworm-20261104-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
 
-# Agent versions are pinned here and only here. To update: bump the value,
-# release aisb, run `aisb build`. To try another version without a release:
-# PI_VERSION=vX.Y.Z / CODEX_VERSION=X.Y.Z aisb build.
-ARG PI_VERSION=v1.4.0
+# Every downloaded artifact is pinned in this file, next to the step that
+# uses it, by exact version plus SHA-256 (or commit SHA / image digest), and
+# the build fails on any mismatch. Change pins with scripts/pins.sh; see
+# "Bumping pinned versions" in the README.
+#
+# Oh My Zsh is cloned at this exact commit.
 ARG OMZ_SHA=e64912e0c1eaa32181c3b5e5e4bf8042ecd0e8a7
 ARG TARGETARCH
 # Match host uid/gid so bind-mounted files stay writable. build.sh passes the
@@ -273,25 +275,6 @@ RUN set -e \
  && rm -rf /tmp/gws /tmp/gws.tgz \
  && gws --version
 
-RUN set -e \
- && case "$TARGETARCH" in \
-      arm64) ARCH=arm64 ;; \
-      amd64) ARCH=x64 ;; \
-      *) echo "unsupported arch: $TARGETARCH"; exit 1 ;; \
-    esac \
- && BASE="https://github.com/earendil-works/pi/releases/download/${PI_VERSION}" \
- && [ "$PI_VERSION" = "latest" ] && BASE="https://github.com/earendil-works/pi/releases/latest/download" || true \
- && curl -fsSL -o /tmp/pi.tgz "$BASE/pi-linux-${ARCH}.tar.gz" \
- && curl -fsSL -o /tmp/pi.sums "$BASE/SHA256SUMS" \
- && SUM="$(grep " pi-linux-${ARCH}.tar.gz\$" /tmp/pi.sums | cut -d' ' -f1)" \
- && { [ -n "$SUM" ] || { echo "no checksum for pi-linux-${ARCH}.tar.gz in SHA256SUMS"; exit 1; }; } \
- && echo "$SUM  /tmp/pi.tgz" | sha256sum -c - \
- && mkdir -p /opt \
- && tar -xzf /tmp/pi.tgz -C /opt \
- && ln -sf /opt/pi/pi /usr/local/bin/pi \
- && rm /tmp/pi.tgz /tmp/pi.sums \
- && /usr/local/bin/pi --version
-
 # ---------- agents ----------
 # claude, codex and pi live under /opt/aisb, owned by root and not writable by
 # the agent user, with /usr/local/bin symlinks. A process running as the agent
@@ -372,6 +355,27 @@ RUN set -e \
  && ln -sf /opt/aisb/codex/bin/codex /usr/local/bin/codex \
  && rm /tmp/codex.tgz \
  && codex --version
+
+# pi: the release tarball from GitHub. Package pins match the release's
+# SHA256SUMS and GitHub's asset digests (pi publishes no signature).
+ARG PI_VERSION=1.4.0
+ARG PI_PKG_SHA256_AMD64=f2e4e4329603223d03260cdb8bd5033dbdc1f73ba58ab8939db2e56546e115d2
+ARG PI_PKG_SHA256_ARM64=fa5829c7ef83ffeaebba015715c8306220f89b2aa8a00154efbba98dd5440156
+ARG PI_BIN_SHA256_AMD64=0d7611d0b86d38ec8f65dda8e8bee9c5e907c7bae381e9cfff9161b21e8087d0
+ARG PI_BIN_SHA256_ARM64=26507c6bbf0beef1c5ef109dea333ddb73c058f9f75fed1de13f4186d73e919e
+RUN set -e \
+ && ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
+ && case "$ARCH" in \
+      amd64) A=x64;   SUM=$PI_PKG_SHA256_AMD64; BIN=$PI_BIN_SHA256_AMD64 ;; \
+      arm64) A=arm64; SUM=$PI_PKG_SHA256_ARM64; BIN=$PI_BIN_SHA256_ARM64 ;; \
+      *) echo "unsupported arch: $ARCH"; exit 1 ;; \
+    esac \
+ && aisb-fetch "https://github.com/earendil-works/pi/releases/download/v${PI_VERSION}/pi-linux-${A}.tar.gz" /tmp/pi.tgz "$SUM" \
+ && tar -xzf /tmp/pi.tgz -C /opt/aisb --no-same-owner \
+ && aisb-fetch - /opt/aisb/pi/pi "$BIN" \
+ && ln -sf /opt/aisb/pi/pi /usr/local/bin/pi \
+ && rm /tmp/pi.tgz \
+ && pi --version
 
 # Nothing under /opt/aisb may be writable by anyone but root.
 RUN chown -R root:root /opt/aisb \
