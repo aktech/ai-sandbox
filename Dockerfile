@@ -319,7 +319,11 @@ RUN set -e \
 # Set both in the environment and as a managed settings drop-in, which user and
 # project settings cannot override.
 ENV DISABLE_AUTOUPDATER=1 DISABLE_UPDATES=1
-COPY --chmod=0644 <<'JSON' /etc/claude-code/managed-settings.d/50-aisb.json
+# (Written by RUN, not COPY --chmod: that mode would also land on the parent
+# directories it creates, leaving them unreadable to Claude Code.)
+RUN install -d -o root -g root -m 0755 /etc/claude-code/managed-settings.d \
+ && cat > /etc/claude-code/managed-settings.d/50-aisb.json <<'JSON' \
+ && chmod 0644 /etc/claude-code/managed-settings.d/50-aisb.json
 {
   "env": {
     "DISABLE_AUTOUPDATER": "1",
