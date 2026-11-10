@@ -20,13 +20,15 @@ ARG AGENT_HOME=/home/agent
 ENV DEBIAN_FRONTEND=noninteractive
 
 # mise (jdx/mise) lives system-wide so root-built tool installs are visible at
-# runtime under the unprivileged agent user. Shims dir first in PATH means
-# `node`, `go`, `python`, `uv`, `pixi`, `claude` resolve to whatever is pinned
-# in /etc/mise/config.toml — no per-user mise activation needed.
+# runtime under the unprivileged agent user. The shims dir sits before the
+# system dirs, so `node`, `go`, `python`, `uv`, `pixi` resolve to whatever is
+# pinned in /etc/mise/config.toml with no per-user mise activation. It comes
+# after /usr/local/bin because the agent user can write to it (see the chown
+# below) and must not be able to shadow the root-owned agent binaries there.
 ENV MISE_DATA_DIR=/usr/local/share/mise
 ENV MISE_CONFIG_DIR=/etc/mise
 ENV MISE_CACHE_DIR=/var/cache/mise
-ENV PATH=/usr/local/share/mise/shims:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/local/share/mise/shims:/usr/sbin:/usr/bin:/sbin:/bin
 
 # Base tools. gnupg dropped — was only used for the (now gone) NodeSource keyring;
 # zero callers remain. mise will fall back to checksum-only verification for
@@ -290,6 +292,63 @@ RUN set -e \
  && rm /tmp/pi.tgz /tmp/pi.sums \
  && /usr/local/bin/pi --version
 
+# ---------- agents ----------
+# claude, codex and pi live under /opt/aisb, owned by root and not writable by
+# the agent user, with /usr/local/bin symlinks. A process running as the agent
+# user (an npm postinstall script, a self-updater) cannot replace them without
+# sudo. The agent user does have passwordless sudo (see below), so this is not
+# a hard boundary: `aisb verify` reads the files out of a running sandbox
+# through the Docker daemon and compares them with the *_BIN_SHA256_* pins.
+# Each tool keeps two kinds of pins:
+#   *_PKG_SHA256_*  the downloaded release file, checked before unpacking
+#   *_BIN_SHA256_*  the executable itself, checked after unpacking
+# Bump any of them with scripts/pins.sh <tool> <version>; it re-verifies the
+# publisher's signature or checksum file and prints the new ARG lines.
+
+# Claude Code: the native binary for this exact version from Anthropic's
+# release bucket (the file install.sh downloads). Pins are the per-platform
+# checksums in that version's manifest.json, whose detached GPG signature
+# (manifest.json.sig) was verified against Anthropic's release key
+# 31DD DE24 DDFA B679 F42D 7BD2 BAA9 29FF 1A7E CACE
+# (https://code.claude.com/docs/en/setup#binary-integrity-and-code-signing).
+# The download is the executable, so one pin per arch covers both checks.
+ARG CLAUDE_VERSION=2.1.311
+ARG CLAUDE_BIN_SHA256_AMD64=86dc1fcc69498159eaf15f446613e847010f9036bfbbdffd4c49350be8489ada
+ARG CLAUDE_BIN_SHA256_ARM64=2e2496c9a8065df93acb0fca2d341f59a6b8777649b2e025ab8c9bcd5eef61f3
+RUN set -e \
+ && ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
+ && case "$ARCH" in \
+      amd64) A=x64;   SUM=$CLAUDE_BIN_SHA256_AMD64 ;; \
+      arm64) A=arm64; SUM=$CLAUDE_BIN_SHA256_ARM64 ;; \
+      *) echo "unsupported arch: $ARCH"; exit 1 ;; \
+    esac \
+ && install -d -o root -g root -m 0755 /opt/aisb /opt/aisb/claude \
+ && aisb-fetch "https://downloads.claude.ai/claude-code-releases/${CLAUDE_VERSION}/linux-${A}/claude" /opt/aisb/claude/claude "$SUM" \
+ && chown root:root /opt/aisb/claude/claude \
+ && chmod 0755 /opt/aisb/claude/claude \
+ && ln -sf /opt/aisb/claude/claude /usr/local/bin/claude \
+ && claude --version
+
+# Claude Code updates itself by default. Inside a sandbox the binary must stay
+# the pinned one, so turn off every update path: DISABLE_AUTOUPDATER stops the
+# background check and DISABLE_UPDATES also blocks `claude update` and
+# `claude install` (https://code.claude.com/docs/en/setup#disable-auto-updates).
+# Set both in the environment and as a managed settings drop-in, which user and
+# project settings cannot override.
+ENV DISABLE_AUTOUPDATER=1 DISABLE_UPDATES=1
+COPY --chmod=0644 <<'JSON' /etc/claude-code/managed-settings.d/50-aisb.json
+{
+  "env": {
+    "DISABLE_AUTOUPDATER": "1",
+    "DISABLE_UPDATES": "1"
+  }
+}
+JSON
+
+# Nothing under /opt/aisb may be writable by anyone but root.
+RUN chown -R root:root /opt/aisb \
+ && chmod -R go-w /opt/aisb
+
 # Create non-root agent user with HOME matching host's so bind-mounted ~/.pi/agent
 # resolves at the same path inside the container. -o allows duplicate uid/gid
 # (gid 20 conflicts with debian's `dialout`).
@@ -320,19 +379,9 @@ RUN set -e \
  && echo 'agent ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/agent \
  && chmod 0440 /etc/sudoers.d/agent
 
-# claude-code via the native installer, run as the agent user so the binary
-# lands in $HOME/.local/bin (user-owned, writable). The previous `npm install -g`
-# under /usr/local/share/mise tripped claude's "system install → needs sudo"
-# heuristic even when the dir was chowned to agent, breaking in-container
-# auto-updates. Container is meant to stay mutable so agents can self-update.
-# ENV PATH set BEFORE the install so the bootstrap doesn't warn about missing PATH.
-ENV PATH=${AGENT_HOME}/.local/bin:${PATH}
-RUN set -e \
- && su -s /bin/sh agent -c ' \
-      export HOME='"$AGENT_HOME"' PATH='"$AGENT_HOME"'/.local/bin:$PATH && \
-      curl -fsSL https://claude.ai/install.sh | bash && \
-      claude --version \
-    '
+# ~/.local/bin stays on PATH for tools the user installs (uv tool, pipx), but
+# last, so nothing dropped there shadows the pinned agents.
+ENV PATH=${PATH}:${AGENT_HOME}/.local/bin
 
 # codex (OpenAI Codex CLI) via npm, installed as the agent user so the `codex`
 # binary lands in $HOME/.local/bin (user-owned, writable) — same rationale as
