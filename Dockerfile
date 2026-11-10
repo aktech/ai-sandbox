@@ -345,6 +345,34 @@ COPY --chmod=0644 <<'JSON' /etc/claude-code/managed-settings.d/50-aisb.json
 }
 JSON
 
+# Codex: the codex-package tarball from the GitHub release (the same files the
+# npm package @openai/codex-linux-* ships, without the Node launcher). Package
+# pins match the release's codex-package_SHA256SUMS and GitHub's asset
+# digests. The bin/codex pins were checked against OpenAI's Sigstore signature
+# (codex-<triple>.sigstore): the signature verifies, the signing certificate
+# chains to Sigstore's Fulcio root and names
+# github.com/openai/codex/.github/workflows/rust-release.yml at the release
+# tag, and the Rekor log entry records the same SHA-256.
+ARG CODEX_VERSION=0.164.0
+ARG CODEX_PKG_SHA256_AMD64=3ec55053109608d5038f7e50750f7d25f768dfd740fef071aa710e2559b63aac
+ARG CODEX_PKG_SHA256_ARM64=5918add6c7e9cf1e14a9af1b4c0f4bf1d24a43903faac26df5dc4c019ea91bd5
+ARG CODEX_BIN_SHA256_AMD64=b93f6811d3f653f0fb83be4050d857fb9abbb111dfa2ce160563327daff7f306
+ARG CODEX_BIN_SHA256_ARM64=8813c8d8a4cea2eeba271b72ab22f49628b184b24ab18dbef06b4ce41e9a8d39
+RUN set -e \
+ && ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
+ && case "$ARCH" in \
+      amd64) T=x86_64-unknown-linux-musl;  SUM=$CODEX_PKG_SHA256_AMD64; BIN=$CODEX_BIN_SHA256_AMD64 ;; \
+      arm64) T=aarch64-unknown-linux-musl; SUM=$CODEX_PKG_SHA256_ARM64; BIN=$CODEX_BIN_SHA256_ARM64 ;; \
+      *) echo "unsupported arch: $ARCH"; exit 1 ;; \
+    esac \
+ && aisb-fetch "https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/codex-package-${T}.tar.gz" /tmp/codex.tgz "$SUM" \
+ && install -d -o root -g root -m 0755 /opt/aisb/codex \
+ && tar -xzf /tmp/codex.tgz -C /opt/aisb/codex --no-same-owner \
+ && aisb-fetch - /opt/aisb/codex/bin/codex "$BIN" \
+ && ln -sf /opt/aisb/codex/bin/codex /usr/local/bin/codex \
+ && rm /tmp/codex.tgz \
+ && codex --version
+
 # Nothing under /opt/aisb may be writable by anyone but root.
 RUN chown -R root:root /opt/aisb \
  && chmod -R go-w /opt/aisb
@@ -382,21 +410,6 @@ RUN set -e \
 # ~/.local/bin stays on PATH for tools the user installs (uv tool, pipx), but
 # last, so nothing dropped there shadows the pinned agents.
 ENV PATH=${PATH}:${AGENT_HOME}/.local/bin
-
-# codex (OpenAI Codex CLI) via npm, installed as the agent user so the `codex`
-# binary lands in $HOME/.local/bin (user-owned, writable) — same rationale as
-# claude above: the container stays mutable so the agent can self-update. npm's
-# --prefix points the global install at ~/.local, whose bin dir is already on
-# PATH; codex's `#!/usr/bin/env node` launcher resolves node through the mise
-# shim already on PATH. The npm cache is dropped to keep the layer slim.
-ARG CODEX_VERSION=0.164.0
-RUN set -e \
- && su -s /bin/sh agent -c ' \
-      export HOME='"$AGENT_HOME"' PATH='"$AGENT_HOME"'/.local/bin:$PATH && \
-      npm install -g --prefix "$HOME/.local" @openai/codex@'"$CODEX_VERSION"' && \
-      codex --version && \
-      rm -rf "$HOME/.npm" \
-    '
 
 # Confirm shims resolve under the unprivileged user too — catches perm bugs at
 # build time rather than first `aisb` shell.
