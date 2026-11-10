@@ -408,3 +408,28 @@ determined process in the sandbox; `aisb verify` is what detects that.
 The pins come from the Dockerfile embedded in this aisb, so a sandbox built
 by a different aisb version shows as `changed` until you rebuild it.
 
+### Bumping pinned versions
+
+Everything the image downloads is pinned in the `Dockerfile` (and the proxy's
+`Dockerfile.proxy`): base images by digest, Oh My Zsh by commit, and every
+release by exact version plus SHA-256. The build fails if any download does
+not match. `scripts/pins.sh` fetches a new version, checks it against what
+the publisher signed or published, prints any OSV advisories, and prints the
+lines to paste over the old ones:
+
+| Pin | Command | What it checks |
+| --- | --- | --- |
+| Claude Code | `scripts/pins.sh claude 2.1.311` | GPG signature on the release `manifest.json`, by Anthropic's key `31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE` |
+| Codex | `scripts/pins.sh codex 0.164.0` | `codex-package_SHA256SUMS`, GitHub's asset digests, and OpenAI's Sigstore signature on `bin/codex` (certificate from Fulcio for the openai/codex release workflow at that tag, logged in Rekor) |
+| pi | `scripts/pins.sh pi 1.4.0` | `SHA256SUMS` and GitHub's asset digests (pi publishes no signature) |
+| mise | `scripts/pins.sh mise 2026.10.17` | GPG signature on `SHASUMS256.asc`, by the mise release key `24853EC9F655CE80B48E6C3A8B81C9D17413A06D`, and GitHub's asset digests |
+| gws | `scripts/pins.sh gws 0.22.5` | the release's `.sha256` files and GitHub's asset digests |
+| Base images | `scripts/pins.sh image debian:bookworm-20261104-slim` | resolves the tag to its multi-arch digest on the registry |
+| mise tools | edit `config.toml` in the Dockerfile, then `scripts/pins.sh mise-lock ai-sandbox-pi:latest` | regenerates `mise.lock` with the image's pinned mise; paste it between `COPY <<'LOCK'` and `LOCK` |
+
+After changing a pin: read the release notes, prefer a release that has been
+out for a week or two, run `aisb build`, and run `aisb verify` in a fresh
+sandbox. Oh My Zsh (`OMZ_SHA`) is a commit SHA from github.com/ohmyzsh/ohmyzsh.
+Debian packages from `apt-get` are checked by apt's signed archive, but are
+not pinned to versions.
+
