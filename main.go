@@ -118,19 +118,6 @@ func containerName(prefix string) (string, error) {
 
 // ---------- build (kept here because it owns the embedded Dockerfile) ----------
 
-// agentVersionBuildArgs passes agent versions the user set in the environment
-// (PI_VERSION, CODEX_VERSION) as build args. Unset ones are left out so the
-// versions pinned in the Dockerfile apply; aisb keeps no copy of its own.
-func agentVersionBuildArgs() []string {
-	var args []string
-	for _, k := range []string{"PI_VERSION", "CODEX_VERSION"} {
-		if v := os.Getenv(k); v != "" {
-			args = append(args, "--build-arg", k+"="+v)
-		}
-	}
-	return args
-}
-
 func cmdBuild(log *logger) error {
 	image := envDefault("AISB_IMAGE_NAME", "ai-sandbox-pi:latest")
 	uid := fmt.Sprintf("%d", os.Getuid())
@@ -150,19 +137,13 @@ func cmdBuild(log *logger) error {
 		return fmt.Errorf("write Dockerfile: %w", err)
 	}
 
-	versions := agentVersionBuildArgs()
-	pins := "as pinned in the Dockerfile"
-	if len(versions) > 0 {
-		pins = strings.Join(versions, " ")
-	}
-	log.Step(fmt.Sprintf("building %s (home=%s, uid=%s, gid=%s, agent versions: %s)", image, home, uid, gid, pins))
-	args := append([]string{"build"}, versions...)
-	args = append(args,
-		"--build-arg", "AGENT_UID="+uid,
-		"--build-arg", "AGENT_GID="+gid,
-		"--build-arg", "AGENT_HOME="+home,
+	log.Step(fmt.Sprintf("building %s (home=%s, uid=%s, gid=%s)", image, home, uid, gid))
+	args := []string{"build",
+		"--build-arg", "AGENT_UID=" + uid,
+		"--build-arg", "AGENT_GID=" + gid,
+		"--build-arg", "AGENT_HOME=" + home,
 		"-t", image,
-	)
+	}
 	// GITHUB_TOKEN raises the API rate limit for mise's attestation checks
 	// during the build. Passed as a BuildKit secret so it never lands in a
 	// layer; the value itself is read by docker from the environment.
