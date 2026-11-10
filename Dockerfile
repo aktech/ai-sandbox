@@ -8,7 +8,6 @@ FROM debian:bookworm-20261104-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f
 # release aisb, run `aisb build`. To try another version without a release:
 # PI_VERSION=vX.Y.Z / CODEX_VERSION=X.Y.Z aisb build.
 ARG PI_VERSION=v1.4.0
-ARG MISE_VERSION=v2026.5.3
 ARG OMZ_SHA=e64912e0c1eaa32181c3b5e5e4bf8042ecd0e8a7
 ARG TARGETARCH
 # Match host uid/gid so bind-mounted files stay writable. build.sh passes the
@@ -38,11 +37,48 @@ RUN apt-get update -qq \
       tini zsh tmux jq \
  && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /var/log/apt/*
 
-# mise — official installer (https://mise.run). MISE_VERSION pins the release;
-# MISE_INSTALL_PATH puts the binary system-wide.
+# aisb-fetch URL OUT SHA256: download over HTTPS and fail the build unless the
+# file matches the pinned SHA-256. Every third-party download below goes
+# through it. With URL "-" it only checks an existing file (used for the
+# binaries unpacked from release tarballs). Removed at the end of the build.
+COPY --chmod=0755 <<'SH' /usr/local/sbin/aisb-fetch
+#!/bin/sh
+set -eu
+url=$1 out=$2 sum=$3
+case "$sum" in
+  *[!0-9a-f]*|'') echo "aisb-fetch: no valid sha256 pin for $url" >&2; exit 1 ;;
+esac
+[ "${#sum}" -eq 64 ] || { echo "aisb-fetch: sha256 pin for $url is not 64 hex chars" >&2; exit 1; }
+if [ "$url" = - ]; then
+  url=$out
+else
+  curl -fsSL --proto '=https' --tlsv1.2 --retry 5 --retry-all-errors -o "$out" "$url"
+fi
+echo "$sum  $out" | sha256sum --check --strict --quiet - \
+  || { echo "aisb-fetch: CHECKSUM MISMATCH for $url" >&2; rm -f "$out"; exit 1; }
+echo "aisb-fetch: verified sha256 $sum for $url"
+SH
+
+# mise: the release tarball from GitHub, checked against the pinned SHA-256.
+# Pins come from the release's SHASUMS256.txt after verifying its GPG
+# signature (SHASUMS256.asc) with the mise release key
+# 24853EC9F655CE80B48E6C3A8B81C9D17413A06D (https://mise.jdx.dev/installing-mise.html).
+# Bump: scripts/pins.sh mise <version>
+ARG MISE_VERSION=2026.10.17
+ARG MISE_PKG_SHA256_AMD64=17565e268c5542d8ce944321e17af81e0b741b65af4aa7e8e010ee77376a4aa3
+ARG MISE_PKG_SHA256_ARM64=cac510e51793ad45e65fe92305bdbe4309c9c60b5907badbc7eba111738ab08f
 RUN set -e \
- && curl -fsSL https://mise.run \
-      | env MISE_VERSION=${MISE_VERSION} MISE_INSTALL_PATH=/usr/local/bin/mise sh \
+ && ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
+ && case "$ARCH" in \
+      amd64) A=x64;   SUM=$MISE_PKG_SHA256_AMD64 ;; \
+      arm64) A=arm64; SUM=$MISE_PKG_SHA256_ARM64 ;; \
+      *) echo "unsupported arch: $ARCH"; exit 1 ;; \
+    esac \
+ && aisb-fetch "https://github.com/jdx/mise/releases/download/v${MISE_VERSION}/mise-v${MISE_VERSION}-linux-${A}.tar.gz" /tmp/mise.tgz "$SUM" \
+ && mkdir /tmp/mise \
+ && tar -xzf /tmp/mise.tgz -C /tmp/mise --no-same-owner \
+ && install -o root -g root -m 0755 /tmp/mise/mise/bin/mise /usr/local/bin/mise \
+ && rm -rf /tmp/mise /tmp/mise.tgz \
  && mise --version
 
 # Tool versions live in /etc/mise/config.toml. One source of truth — bump here,
@@ -189,6 +225,9 @@ RUN set -e \
       codex   --version && \
       pi      --version    \
     '
+
+# The download helper is build-time only.
+RUN rm -f /usr/local/sbin/aisb-fetch
 
 USER agent
 WORKDIR ${AGENT_HOME}
