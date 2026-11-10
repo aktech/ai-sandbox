@@ -21,6 +21,7 @@ package main
 
 import (
 	_ "embed"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -32,6 +33,7 @@ import (
 	"github.com/aktech/ai-sandbox/internal/cfg"
 	"github.com/aktech/ai-sandbox/internal/cmd"
 	"github.com/aktech/ai-sandbox/internal/dx"
+	"github.com/aktech/ai-sandbox/internal/integrity"
 )
 
 // labelFlags collects repeated -label k=v values for `aisb create`.
@@ -174,6 +176,65 @@ func cmdBuild(log *logger) error {
 	return list.Run()
 }
 
+// ---------- verify (needs the embedded Dockerfile's pins) ----------
+
+// Exit codes for `aisb verify`, so callers can tell a security finding from
+// a failure to check.
+const (
+	verifyOK      = 0
+	verifyError   = 1
+	verifyFinding = 3
+)
+
+// cmdVerify checks the agent binaries in a running sandbox (the current
+// project's, or the named one) against the pins in the embedded Dockerfile.
+func cmdVerify(log *logger, defaultName string, args []string) int {
+	fs := flag.NewFlagSet("verify", flag.ExitOnError)
+	asJSON := fs.Bool("json", false, "print the report as JSON")
+	_ = fs.Parse(args)
+	name := defaultName
+	if fs.NArg() > 0 {
+		name = fs.Arg(0)
+	}
+	if !dx.ContainerRunning(dx.Cmd{}, name) {
+		log.Warn(name + " is not running")
+		return verifyError
+	}
+	rep, err := integrity.Verify(embeddedDockerfile, dx.Sandbox{Docker: dx.Cmd{}, Name: name})
+	if err != nil {
+		log.Warn("verify " + name + ": " + err.Error())
+		return verifyError
+	}
+	if *asJSON {
+		out, _ := json.MarshalIndent(struct {
+			Container string `json:"container"`
+			OK        bool   `json:"ok"`
+			integrity.Report
+		}{name, rep.OK(), rep}, "", "  ")
+		fmt.Println(string(out))
+	} else {
+		for _, r := range rep.Results {
+			switch r.Status {
+			case integrity.OK:
+				log.OK(fmt.Sprintf("%-6s ok  %s  sha256 %s", r.Agent, r.Path, r.Got))
+			case integrity.Changed:
+				log.Warn(fmt.Sprintf("SECURITY: %s binary changed since the image was built: %s\n  pinned sha256 %s\n  found  sha256 %s",
+					r.Agent, r.Path, r.Want, r.Got))
+			default:
+				log.Warn(fmt.Sprintf("SECURITY: %s %s: %s", r.Agent, r.Status, r.Detail))
+			}
+		}
+	}
+	if !rep.OK() {
+		if !*asJSON {
+			log.Warn("an agent binary is not the pinned build; treat " + name + " as untrusted, " +
+				"then `aisb rm " + name + "` and rebuild with `aisb build`")
+		}
+		return verifyFinding
+	}
+	return verifyOK
+}
+
 // ---------- main ----------
 
 func usage() {
@@ -186,6 +247,8 @@ Usage:
   aisb status      show container status
   aisb ls          list all aisb-* containers
   aisb build       (re)build the image
+  aisb verify [--json] [name]  check claude/codex/pi in a running sandbox
+                   against the pinned builds (exit 3: a binary changed)
   aisb proxy init  set up proxy mode (master password, CA, proxy image)
   aisb proxy stop  stop the shared credential proxy
   aisb proxy log   stream the proxy's allow/deny log
@@ -333,6 +396,9 @@ func main() {
 		dieOn(h.LS())
 	case "build":
 		dieOn(cmdBuild(log))
+	case "verify":
+		// aisb verify [--json] [name]
+		os.Exit(cmdVerify(log, name, os.Args[2:]))
 	case "secret":
 		// aisb secret set|rm|ls <name>
 		dieOn(dispatchSecret(h, os.Args[2:]))
@@ -348,7 +414,7 @@ func main() {
 	case "-h", "--help", "help":
 		usage()
 	default:
-		log.Die("unknown command: "+sub+" (use: up | stop | rm | status | ls | build | secret | proxy)", 2)
+		log.Die("unknown command: "+sub+" (use: up | stop | rm | status | ls | build | verify | secret | proxy)", 2)
 	}
 }
 

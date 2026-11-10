@@ -371,3 +371,40 @@ The image is a snapshot: what is installed changes only when you run
 - There is no environment override for agent versions: a version without
   its matching checksums would fail the build. To move a pin yourself, see
   [Bumping pinned versions](#bumping-pinned-versions).
+
+### Checking the agent binaries
+
+`aisb verify` (or `aisb verify <name>`) checks that `claude`, `codex` and
+`pi` in a running sandbox are still the builds pinned in the Dockerfile:
+
+```sh
+aisb verify            # current project's sandbox
+aisb verify --json aisb-myproj
+```
+
+For each agent it reports one of:
+
+- `ok`: the file under `/opt/aisb` has the pinned SHA-256 and is what the
+  sandbox shell runs.
+- `changed`: the file's SHA-256 differs from the pin. Something replaced
+  the binary after the build.
+- `shadowed`: the file is intact, but the shell runs a different `claude`
+  (for example one earlier on `PATH` via `~/.zshrc`), or none.
+- `missing` / `unpinned`: the file could not be read, or this aisb has no
+  pin for the image's architecture.
+
+It exits 0 when every agent is `ok`, 3 when any is not, and 1 when it could
+not check (for example the sandbox is not running). Treat exit code 3 as a
+security warning: stop using the sandbox, `aisb rm` it and run `aisb build`.
+
+The file contents are read through the Docker daemon (`docker cp`), not by
+running anything inside the sandbox, so even root in the sandbox cannot make
+a replaced binary look pinned. The `shadowed` check does run the sandbox's
+shell, so it reflects the agent user's own shell setup but not a sandbox
+where something has root. The agent user has passwordless `sudo`, so the
+root-owned install stops ordinary and accidental replacement, not a
+determined process in the sandbox; `aisb verify` is what detects that.
+
+The pins come from the Dockerfile embedded in this aisb, so a sandbox built
+by a different aisb version shows as `changed` until you rebuild it.
+
